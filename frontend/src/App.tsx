@@ -62,6 +62,7 @@ export default function App() {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectWarning, setConnectWarning] = useState<string | null>(null);
 
   const [host, setHost] = useState("");
   const [username, setUsername] = useState("admin");
@@ -129,6 +130,7 @@ export default function App() {
   const connect = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setConnectWarning(null);
     try {
       const r = await apiFetch("/api/connect", {
         method: "POST",
@@ -140,8 +142,9 @@ export default function App() {
           verify_tls: verifyTls,
         }),
       });
-      const data = await readJson<{ session_id: string }>(r);
+      const data = await readJson<{ session_id: string; warning?: string }>(r);
       setSessionId(data.session_id);
+      setConnectWarning(data.warning ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -280,6 +283,11 @@ export default function App() {
       </header>
 
       {error && <div className="banner-error">{error}</div>}
+      {connectWarning && !error && (
+        <div className="banner-error" style={{ background: "var(--status-not)", color: "var(--text)" }}>
+          {connectWarning}
+        </div>
+      )}
 
       <section className="card">
         <h2>BIG-IP connection</h2>

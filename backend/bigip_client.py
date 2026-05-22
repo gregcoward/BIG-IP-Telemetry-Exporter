@@ -44,34 +44,57 @@ class BigIPClient:
 
     def login(self) -> None:
         url = self._url("/mgmt/shared/authn/login")
-        payload = {"username": self.username, "password": self.password}
+        payload = {
+            "username": self.username,
+            "password": self.password,
+            "loginProviderName": "tmos",
+        }
         r = self._session.post(
             url,
             json=payload,
             verify=self.verify_tls,
             timeout=self.timeout,
+            headers={"Content-Type": "application/json"},
         )
         if r.status_code >= 400:
             raise BigIPError(f"Login failed ({r.status_code}): {r.text[:400]}")
         data = r.json()
-        token = data.get("token", {}).get("token")
+        token_obj = data.get("token") or {}
+        token = token_obj.get("token")
         if not token:
             raise BigIPError("Login response missing token")
         self._token = token
         self._session.headers["X-F5-Auth-Token"] = token
 
-    def extend_token(self) -> None:
+    def extend_token(self, *, timeout: int = 3600) -> None:
+        """Extend token lifetime (default login timeout is 1200s)."""
         if not self._token:
             return
-        url = self._url("/mgmt/shared/authz/tokens")
+        # Must PATCH the specific token resource, not the collection.
+        url = self._url(f"/mgmt/shared/authz/tokens/{self._token}")
+        body: dict[str, int | str] = {"timeout": min(timeout, 36000)}
         r = self._session.patch(
             url,
-            json={"timeout": 1200},
+            json=body,
             verify=self.verify_tls,
             timeout=self.timeout,
+            headers={"Content-Type": "application/json"},
         )
+        if r.status_code == 406:
+            # Max allowed timeout exceeded — retry at platform maximum.
+            body = {"timeout": 36000}
+            r = self._session.patch(
+                url,
+                json=body,
+                verify=self.verify_tls,
+                timeout=self.timeout,
+                headers={"Content-Type": "application/json"},
+            )
         if r.status_code >= 400:
-            raise BigIPError(f"Token extension failed ({r.status_code})")
+            detail = r.text.replace("\n", " ").strip()[:400]
+            raise BigIPError(
+                f"Token extension failed ({r.status_code}): {detail or 'no response body'}",
+            )
 
     def get(self, endpoint: str, *, params: dict[str, Any] | None = None) -> Any:
         if not self._token:

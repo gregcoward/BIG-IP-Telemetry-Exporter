@@ -186,12 +186,31 @@ def connect(body: ConnectBody) -> dict[str, str]:
     )
     try:
         client.login()
-        client.extend_token()
     except BigIPError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    warning: str | None = None
+    token_timeout_sec = 1200
+    try:
+        client.extend_token()
+        token_timeout_sec = 3600
+    except BigIPError as exc:
+        # Login succeeded; export can still run with the default ~20 minute token TTL.
+        warning = (
+            f"Connected, but could not extend auth token ({exc}). "
+            "Long export runs may need to reconnect if the session expires."
+        )
+
     sid = secrets.token_urlsafe(24)
     _sessions[sid] = _Session(client=client, created=time.time())
-    return {"session_id": sid, "host": body.host}
+    result: dict[str, Any] = {
+        "session_id": sid,
+        "host": body.host,
+        "token_timeout_sec": token_timeout_sec,
+    }
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 @app.delete("/api/session/{session_id}")
