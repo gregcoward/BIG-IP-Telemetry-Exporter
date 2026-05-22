@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -104,6 +104,13 @@ class ConnectBody(BaseModel):
     verify_tls: bool = False
 
 
+class ConnectResponse(BaseModel):
+    session_id: str
+    host: str
+    token_timeout_sec: int = 1200
+    warning: str | None = None
+
+
 class ExporterItem(BaseModel):
     type: str
     enabled: bool = True
@@ -134,6 +141,19 @@ class ProbeBody(BaseModel):
 
 
 app = FastAPI(title="BIG-IP Metrics Exporter", version="1.0.0")
+
+
+@app.exception_handler(Exception)
+async def api_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return JSON errors for API routes instead of a bare 500 page."""
+    if request.url.path.startswith("/api"):
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal error: {exc}"},
+        )
+    raise exc
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -176,8 +196,8 @@ def list_apis(
     return {"apis": rows, "count": len(rows), "modules": modules}
 
 
-@app.post("/api/connect")
-def connect(body: ConnectBody) -> dict[str, str]:
+@app.post("/api/connect", response_model=ConnectResponse)
+def connect(body: ConnectBody) -> ConnectResponse:
     client = BigIPClient(
         body.host,
         body.username,
@@ -195,7 +215,6 @@ def connect(body: ConnectBody) -> dict[str, str]:
         client.extend_token()
         token_timeout_sec = 3600
     except BigIPError as exc:
-        # Login succeeded; export can still run with the default ~20 minute token TTL.
         warning = (
             f"Connected, but could not extend auth token ({exc}). "
             "Long export runs may need to reconnect if the session expires."
@@ -203,14 +222,12 @@ def connect(body: ConnectBody) -> dict[str, str]:
 
     sid = secrets.token_urlsafe(24)
     _sessions[sid] = _Session(client=client, created=time.time())
-    result: dict[str, Any] = {
-        "session_id": sid,
-        "host": body.host,
-        "token_timeout_sec": token_timeout_sec,
-    }
-    if warning:
-        result["warning"] = warning
-    return result
+    return ConnectResponse(
+        session_id=sid,
+        host=body.host,
+        token_timeout_sec=token_timeout_sec,
+        warning=warning,
+    )
 
 
 @app.delete("/api/session/{session_id}")
