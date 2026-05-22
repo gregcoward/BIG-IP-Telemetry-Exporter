@@ -84,13 +84,19 @@ IMAGE="${IMAGE}" ./scripts/k8s-deploy.sh minimal
 
 **Port-forward (minimal overlay):**
 
+Use `--address 0.0.0.0` so the UI is reachable via your machine’s IP, not only `127.0.0.1`:
+
 ```bash
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000
-kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090
+export HOST_IP="$(./scripts/host-ip.sh)"   # LAN IP shown to clients
+
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/bigip-metrics-backend 8001:8000
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/prometheus 9090:9090
 ```
 
-- UI + API: http://127.0.0.1:8001 (local port **8001** → service port 8000)  
-- Prometheus: http://127.0.0.1:9090  
+- UI + API: `http://<HOST-IP>:8001` (local port **8001** → service port 8000)  
+- Prometheus: `http://<HOST-IP>:9090`  
+
+Prometheus links in the UI use the hostname from your browser (e.g. `192.168.1.10:8001`), or set `ACCESS_HOST` on the backend Deployment.
 
 **Ingress:** Update hosts in `k8s/base/ingress.yaml` or the `example` overlay patch, set `ingressClassName` for your controller, then apply an overlay that includes Ingress.
 
@@ -139,9 +145,12 @@ Confirm the `otel-collector` scrape target is **UP** (Status → Targets).
 
 | Variable | Default (K8s manifest) | Purpose |
 |----------|------------------------|---------|
-| `OTLP_HTTP_ENDPOINT` | `http://otel-collector.bigip-metrics.svc.cluster.local:4318` | OTLP push target |
-| `PROMETHEUS_UI_URL` | `http://prometheus.bigip-metrics.svc.cluster.local:9090` | Link in UI |
-| `COLLECTOR_METRICS_URL` | `http://otel-collector...:8889/metrics` | Validation link |
+| `OTLP_HTTP_ENDPOINT` | `http://otel-collector.bigip-metrics.svc.cluster.local:4318` | Backend → collector (in-cluster) |
+| `ACCESS_HOST` | *(unset)* | Force browser link hostname; default = HTTP `Host` header |
+| `PROMETHEUS_BROWSER_PORT` | `9090` | Prometheus UI port on the host running port-forward |
+| `COLLECTOR_METRICS_BROWSER_PORT` | `8889` | Collector `/metrics` port on the host |
+| `PROMETHEUS_UI_URL` | *(optional)* | Override auto-detected Prometheus URL |
+| `COLLECTOR_METRICS_URL` | *(optional)* | Override auto-detected collector metrics URL |
 | `COLLECTOR_CONFIG_PATH` | `/tmp/collector-config.yaml` | Where API writes generated YAML |
 | `COLLECTOR_RESTART_HINT` | `kubectl ... rollout restart ...` | Shown after Apply in UI |
 

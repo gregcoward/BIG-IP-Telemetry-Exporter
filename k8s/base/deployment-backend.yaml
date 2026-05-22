@@ -27,10 +27,11 @@ spec:
           env:
             - name: OTLP_HTTP_ENDPOINT
               value: http://otel-collector.bigip-metrics.svc.cluster.local:4318
-            - name: PROMETHEUS_UI_URL
-              value: http://prometheus.bigip-metrics.svc.cluster.local:9090
-            - name: COLLECTOR_METRICS_URL
-              value: http://otel-collector.bigip-metrics.svc.cluster.local:8889/metrics
+            # Browser links use the request Host (your machine IP when port-forward uses --address 0.0.0.0).
+            - name: PROMETHEUS_BROWSER_PORT
+              value: "9090"
+            - name: COLLECTOR_METRICS_BROWSER_PORT
+              value: "8889"
             - name: COLLECTOR_CONFIG_PATH
               value: /tmp/collector-config.yaml
             - name: COLLECTOR_RESTART_HINT

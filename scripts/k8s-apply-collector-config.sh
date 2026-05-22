@@ -2,7 +2,9 @@
 # Sync OpenTelemetry Collector config from the running API into the cluster ConfigMap.
 set -euo pipefail
 NAMESPACE="${NAMESPACE:-bigip-metrics}"
-API_URL="${API_URL:-http://127.0.0.1:8001}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOST_IP="${HOST_IP:-$("${ROOT}/scripts/host-ip.sh" 2>/dev/null || echo "127.0.0.1")}"
+API_URL="${API_URL:-http://${HOST_IP}:8001}"
 TMP="$(mktemp -t collector-config.XXXXXX.yaml)"
 
 cleanup() { rm -f "${TMP}"; }

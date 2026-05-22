@@ -7,6 +7,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
 ## Table of contents
 
 - [Architecture](#architecture)
+- [Access from other machines](#access-from-other-machines)
 - [API catalog](#api-catalog)
 - [Quick start](#quick-start)
   - [1. Observability stack](#1-observability-stack)
@@ -47,6 +48,30 @@ flowchart LR
 
 Endpoints are defined in [`data/bigip_apis.csv`](data/bigip_apis.csv) (parsed from your API list — 84 paths, 33 stats/metrics-oriented by default).
 
+## Access from other machines
+
+Services listen on **all interfaces** (`0.0.0.0`). Use your host’s LAN IP instead of `127.0.0.1` when opening the UI from another device.
+
+```bash
+export HOST_IP="$(./scripts/host-ip.sh)"   # e.g. 192.168.1.10
+```
+
+| Surface | URL |
+|---------|-----|
+| API + production UI | `http://<HOST-IP>:8000` |
+| Vite dev UI | `http://<HOST-IP>:5173` |
+| Prometheus (docker compose) | `http://<HOST-IP>:9090` |
+| Collector metrics | `http://<HOST-IP>:8889/metrics` |
+
+Kubernetes port-forward must bind externally:
+
+```bash
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/bigip-metrics-backend 8001:8000
+# UI at http://<HOST-IP>:8001
+```
+
+The UI picks up Prometheus/collector links from the hostname you use in the browser (or set `ACCESS_HOST` on the backend).
+
 ## Quick start
 
 ### 1. Observability stack
@@ -57,8 +82,8 @@ docker compose up -d
 ```
 
 - Collector OTLP: `4317` (gRPC), `4318` (HTTP)
-- Collector Prometheus exporter (validation): http://127.0.0.1:8889/metrics
-- Prometheus UI: http://127.0.0.1:9090
+- Collector Prometheus exporter (validation): `http://<HOST-IP>:8889/metrics`
+- Prometheus UI: `http://<HOST-IP>:9090`
 
 ### 2. Python API
 
@@ -69,7 +94,7 @@ pip install -r requirements.txt
 python run_server.py
 ```
 
-API listens on http://127.0.0.1:8000
+API listens on `http://<HOST-IP>:8000` (bound to `0.0.0.0`; same machine: `http://127.0.0.1:8000`)
 
 ### 3. React UI (development)
 
@@ -77,7 +102,7 @@ API listens on http://127.0.0.1:8000
 cd frontend && npm install && npm run dev
 ```
 
-Open http://127.0.0.1:5173 (proxies `/api` to port 8000).
+Open `http://<HOST-IP>:5173` (Vite listens on all interfaces; proxies `/api` to port 8000).
 
 ### 4. Production UI (optional)
 
@@ -162,19 +187,21 @@ docker tag bigip-metrics-exporter:latest "${IMAGE}"
 docker push "${IMAGE}"
 IMAGE="${IMAGE}" ./scripts/k8s-deploy.sh minimal
 
-# 3. Open the UI
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000
-# http://127.0.0.1:8001
+# 3. Open the UI (reachable on your LAN IP)
+export HOST_IP="$(./scripts/host-ip.sh)"
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/bigip-metrics-backend 8001:8000
+# http://<HOST-IP>:8001
 
 # 4. After configuring exporters in the UI, sync collector config:
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000 &
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/bigip-metrics-backend 8001:8000 &
 ./scripts/k8s-apply-collector-config.sh
 ```
 
 Prometheus (validation):
 
 ```bash
-kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090
+kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/prometheus 9090:9090
+# http://<HOST-IP>:9090
 ```
 
 ### Manifests and overlays
@@ -200,7 +227,7 @@ Do not apply `minimal` without pushing an image first — `bigip-metrics-exporte
 
 - **Image**: set `images` in your overlay `kustomization.yaml`.
 - **Ingress**: use `k8s/base` or `example` overlay; set `spec.rules[].host` and `ingressClassName`.
-- **Env vars** on the backend Deployment: `OTLP_HTTP_ENDPOINT`, `PROMETHEUS_UI_URL`, `COLLECTOR_METRICS_URL` (see [`docs/kubernetes.md`](docs/kubernetes.md)).
+- **Env vars** on the backend Deployment: `OTLP_HTTP_ENDPOINT`, `ACCESS_HOST`, `PROMETHEUS_BROWSER_PORT` (see [`docs/kubernetes.md`](docs/kubernetes.md)).
 
 Full troubleshooting, RBAC, upgrades, and BIG-IP connectivity notes: **[`docs/kubernetes.md`](docs/kubernetes.md)**.
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,13 +34,27 @@ DEFAULT_OTLP_ENDPOINT = os.environ.get(
     "OTLP_HTTP_ENDPOINT",
     "http://127.0.0.1:4318",
 )
-PROMETHEUS_UI_URL = os.environ.get("PROMETHEUS_UI_URL", "http://127.0.0.1:9090")
-COLLECTOR_METRICS_URL = os.environ.get(
-    "COLLECTOR_METRICS_URL",
-    "http://127.0.0.1:8889/metrics",
-)
-
 SESSION_TTL_SEC = 45 * 60
+
+
+def _browser_host(request: Request) -> str:
+    """Host clients use in the browser (LAN IP, Ingress host, etc.)."""
+    if explicit := os.environ.get("ACCESS_HOST", "").strip():
+        return explicit.split(":")[0]
+    host_header = request.headers.get("host", "127.0.0.1:8000")
+    return host_header.split(":")[0]
+
+
+def _browser_urls(request: Request) -> dict[str, str]:
+    host = _browser_host(request)
+    prom_port = os.environ.get("PROMETHEUS_BROWSER_PORT", "9090")
+    coll_port = os.environ.get("COLLECTOR_METRICS_BROWSER_PORT", "8889")
+    return {
+        "prometheus_ui": os.environ.get("PROMETHEUS_UI_URL")
+        or f"http://{host}:{prom_port}",
+        "collector_metrics": os.environ.get("COLLECTOR_METRICS_URL")
+        or f"http://{host}:{coll_port}/metrics",
+    }
 
 
 @dataclass
@@ -110,7 +124,7 @@ class ExportStartBody(BaseModel):
     modules: list[str] = Field(default_factory=list)
     poll_interval_sec: float = 30.0
     otlp_endpoint: str = Field(
-        default="http://127.0.0.1:4318",
+        default_factory=lambda: DEFAULT_OTLP_ENDPOINT,
         description="OTLP HTTP base URL for the collector (backend pushes here)",
     )
 
@@ -135,13 +149,15 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/runtime-config")
-def runtime_config() -> dict[str, str]:
-    """Defaults for the UI (OTLP target, validation URLs) — overridden in Kubernetes via env."""
+def runtime_config(request: Request) -> dict[str, str]:
+    """Defaults for the UI; browser URLs follow the request Host (or ACCESS_HOST)."""
+    urls = _browser_urls(request)
     return {
         "otlp_endpoint": DEFAULT_OTLP_ENDPOINT,
-        "prometheus_ui": PROMETHEUS_UI_URL,
-        "collector_metrics": COLLECTOR_METRICS_URL,
+        "prometheus_ui": urls["prometheus_ui"],
+        "collector_metrics": urls["collector_metrics"],
         "collector_config_path": str(GENERATED_CONFIG_PATH),
+        "access_host": _browser_host(request),
     }
 
 
@@ -304,10 +320,11 @@ def export_stop() -> dict[str, Any]:
 
 
 @app.get("/api/validation/prometheus")
-def prometheus_hints() -> dict[str, str]:
+def prometheus_hints(request: Request) -> dict[str, str]:
+    urls = _browser_urls(request)
     return {
-        "prometheus_ui": PROMETHEUS_UI_URL,
-        "collector_metrics": COLLECTOR_METRICS_URL,
+        "prometheus_ui": urls["prometheus_ui"],
+        "collector_metrics": urls["collector_metrics"],
         "query_example": "bigip_tm_ltm_virtual_stats",
         "scrape_job": "otel-collector",
     }
