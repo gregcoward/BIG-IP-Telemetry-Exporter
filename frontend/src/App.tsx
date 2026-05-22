@@ -109,6 +109,11 @@ function resolveTheme(mode: ThemeMode): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function connectedCountLabel(count: number): string {
+  if (count === 0) return "No BIG-IPs connected";
+  return `${count} BIG-IP${count === 1 ? "" : "s"} connected`;
+}
+
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const s = localStorage.getItem(THEME_STORAGE_KEY);
@@ -218,6 +223,17 @@ export default function App() {
       }
     })();
   }, [refreshDevices]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void refreshDevices();
+    }, 45_000);
+    return () => window.clearInterval(id);
+  }, [refreshDevices]);
+
+  const exportSelectedDevices = useMemo(() => {
+    return devices.filter((d) => exportDeviceIds.has(d.session_id));
+  }, [devices, exportDeviceIds]);
 
   const filteredApis = useMemo(() => {
     return apis.filter((a) => {
@@ -373,10 +389,17 @@ export default function App() {
   }, []);
 
   const refreshStatus = useCallback(async () => {
+    await refreshDevices();
     const r = await apiFetch("/api/export/status");
-    const data = await readJson<{ loop: Record<string, unknown> }>(r);
+    const data = await readJson<{
+      loop: Record<string, unknown>;
+      connected_devices?: BigIPDevice[];
+    }>(r);
     setExportStatus(data.loop);
-  }, []);
+    if (data.connected_devices?.length !== undefined) {
+      setDevices(data.connected_devices);
+    }
+  }, [refreshDevices]);
 
   const reloadPrometheus = useCallback(async () => {
     setBusy(true);
@@ -597,13 +620,61 @@ export default function App() {
         </div>
       )}
 
+      <section className="connected-status-bar" aria-live="polite">
+        <div className="connected-status-summary">
+          <span
+            className={`connected-badge ${devices.length > 0 ? "connected-badge-active" : ""}`}
+            aria-label={connectedCountLabel(devices.length)}
+          >
+            {devices.length}
+          </span>
+          <div className="connected-status-text">
+            <strong>{connectedCountLabel(devices.length)}</strong>
+            {devices.length > 0 && (
+              <span className="muted connected-status-sub">
+                {exportSelectedDevices.length} selected for export
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => void refreshDevices()}
+          >
+            Refresh list
+          </button>
+        </div>
+        {devices.length > 0 ? (
+          <ul className="connected-chips" aria-label="Connected BIG-IP devices">
+            {devices.map((d) => (
+              <li key={d.session_id} className="connected-chip">
+                <span className="connected-chip-label">{d.label || d.display_host}</span>
+                <span className="connected-chip-host">{d.display_host}</span>
+                {exportDeviceIds.has(d.session_id) && (
+                  <span className="connected-chip-export" title="Included in export">
+                    export
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted connected-status-empty">
+            Connect a management IP below to add your first BIG-IP.
+          </p>
+        )}
+      </section>
+
       <section className="card">
-        <h2>BIG-IP connections</h2>
+        <h2>BIG-IP connections ({devices.length} connected)</h2>
         <p className="muted">
           Connect one or more management addresses. Metrics are tagged per device (
           <code>bigip.host</code>). Reconnecting the same host replaces the previous session.
         </p>
-        {devices.length > 0 && (
+        <h3 className="subsection-title">Currently connected</h3>
+        {devices.length === 0 ? (
+          <p className="muted device-list-empty">No BIG-IPs connected. Use the form below to connect.</p>
+        ) : (
           <ul className="device-list">
             {devices.map((d) => (
               <li key={d.session_id} className="device-list-item">
@@ -672,11 +743,9 @@ export default function App() {
           <button type="button" className="btn btn-primary" onClick={() => void connect()}>
             {devices.length > 0 ? "Add BIG-IP" : "Connect"}
           </button>
-          {devices.length > 0 && (
-            <span className="status-ready">
-              {devices.length} device{devices.length === 1 ? "" : "s"} connected
-            </span>
-          )}
+          <span className={devices.length > 0 ? "status-ready" : "muted"}>
+            {connectedCountLabel(devices.length)}
+          </span>
         </div>
       </section>
 
@@ -844,8 +913,23 @@ export default function App() {
       <section className="card">
         <h2>Export to collector (OTLP)</h2>
         <p className="muted">
-          Polls the checked BIG-IP devices in the connections list above.
+          Polls the checked BIG-IP devices in the connections list above (
+          {exportSelectedDevices.length} of {devices.length} connected).
         </p>
+        {devices.length > 0 && (
+          <ul className="connected-chips connected-chips-compact" aria-label="BIG-IPs in export">
+            {exportSelectedDevices.length === 0 ? (
+              <li className="muted">No devices checked for export.</li>
+            ) : (
+              exportSelectedDevices.map((d) => (
+                <li key={d.session_id} className="connected-chip">
+                  <span className="connected-chip-label">{d.label || d.display_host}</span>
+                  <span className="connected-chip-host">{d.display_host}</span>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
         <div className="row">
           <div className="field">
             <label>OTLP HTTP endpoint (Python → collector)</label>
