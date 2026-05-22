@@ -135,18 +135,19 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Run the API (listens on **all interfaces**, port **8000**):
+Run the API (listens on **all interfaces**, port **8001** — avoids conflict with other services on 8000):
 
 ```bash
 source .venv/bin/activate
 python run_server.py
+# listens on port 8001 (override: PORT=8002 python run_server.py)
 ```
 
 Leave this terminal open, or run in the background:
 
 ```bash
 nohup .venv/bin/python run_server.py > /tmp/bigip-metrics-api.log 2>&1 &
-curl -s http://127.0.0.1:8000/api/health
+curl -s http://127.0.0.1:8001/api/health
 ```
 
 ### Step 4 — Build the web UI (production)
@@ -165,12 +166,12 @@ Open the application:
 
 ```bash
 export HOST_IP="$(./scripts/host-ip.sh)"
-echo "UI: http://${HOST_IP}:8000"
+echo "UI: http://${HOST_IP}:8001"
 ```
 
 ### Step 5 — Use the application
 
-1. Open **`http://<HOST-IP>:8000`** in a browser.
+1. Open **`http://<HOST-IP>:8001`** in a browser.
 2. **BIG-IP connection** — enter management IP (e.g. `172.16.60.123`), username, password. Uncheck **Verify TLS** if using the default self-signed management certificate.
 3. **API endpoints** — select stats endpoints (defaults favor `/stats` paths).
 4. **OpenTelemetry Collector exporters** — configure exporters → **Apply collector config** → restart collector:
@@ -189,14 +190,14 @@ cd ~/BIG-IP-Metrics-Exporter/frontend
 npm run dev
 ```
 
-Open **`http://<HOST-IP>:5173`** (proxies `/api` to port 8000).
+Open **`http://<HOST-IP>:5173`** (proxies `/api` to port 8001).
 
 ### Optional — Firewall (UFW)
 
 If UFW is enabled, allow the ports you need:
 
 ```bash
-sudo ufw allow 8000/tcp comment 'BIG-IP Metrics UI/API'
+sudo ufw allow 8001/tcp comment 'BIG-IP Metrics UI/API'
 sudo ufw allow 9090/tcp comment 'Prometheus'
 # Only if remote hosts must scrape collector metrics directly:
 sudo ufw allow 8889/tcp comment 'OTEL Prometheus exporter'
@@ -394,7 +395,7 @@ export HOST_IP="$(./scripts/host-ip.sh)"   # e.g. 192.168.1.10
 
 | Surface | Ubuntu (default) | Kubernetes (port-forward) |
 |---------|------------------|---------------------------|
-| UI + API | `http://<HOST-IP>:8000` | `http://<HOST-IP>:8001` |
+| UI + API | `http://<HOST-IP>:8001` | `http://<HOST-IP>:8001` (port-forward → pod :8000) |
 | Vite dev UI | `http://<HOST-IP>:5173` | — |
 | Prometheus | `http://<HOST-IP>:9090` | `http://<HOST-IP>:9090` |
 | Collector `/metrics` | `http://<HOST-IP>:8889/metrics` | (in-cluster scrape) |

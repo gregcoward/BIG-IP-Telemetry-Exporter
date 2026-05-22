@@ -46,7 +46,7 @@ def _browser_host(request: Request) -> str:
     """Host clients use in the browser (LAN IP, Ingress host, etc.)."""
     if explicit := os.environ.get("ACCESS_HOST", "").strip():
         return explicit.split(":")[0]
-    host_header = request.headers.get("host", "127.0.0.1:8000")
+    host_header = request.headers.get("host", "127.0.0.1:8001")
     return host_header.split(":")[0]
 
 
