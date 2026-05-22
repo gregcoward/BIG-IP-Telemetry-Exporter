@@ -574,13 +574,18 @@ Endpoints are defined in [`data/bigip_apis.csv`](data/bigip_apis.csv) (84 iContr
 
 ## Collector exporters (UI)
 
-| Type | Purpose |
-|------|---------|
-| `prometheus` | Expose metrics for Prometheus scrape (validation) |
-| `otlp_http` | Forward to remote OTLP/HTTP |
-| `otlp_grpc` | Forward to remote OTLP/gRPC |
-| `debug` | Log telemetry to collector stdout |
-| `file` | Write JSON metrics file in collector container |
+The UI configures exporters from the [OpenTelemetry Collector Contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter) distribution (image: `otel/opentelemetry-collector-contrib`).
+
+| Category | Examples |
+|----------|----------|
+| **Core** | OTLP HTTP/gRPC, debug, file, OTel Arrow |
+| **Observability** | Datadog, Splunk HEC, SignalFx, Coralogix, Logz.io, Sumo Logic, Mezmo, Sematext, LogicMonitor |
+| **Cloud** | Google Cloud, Google Managed Prometheus, AWS S3, AWS EMF, Azure Monitor |
+| **Storage** | Elasticsearch, InfluxDB, OpenSearch, ClickHouse, Cassandra |
+| **Messaging** | Kafka, Pulsar, RabbitMQ, syslog |
+| **Advanced** | **Contrib exporter (custom YAML)** — any other contrib component; paste settings from upstream docs |
+
+A Prometheus exporter on **:8889** is always added for local validation (in addition to exporters you enable).
 
 After **Apply collector config**, restart the collector:
 

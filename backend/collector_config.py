@@ -8,70 +8,19 @@ from typing import Any
 
 import yaml
 
+from backend.contrib_exporters import (
+    CONTRIB_EXPORTERS_REPO,
+    EXPORTER_TYPES,
+    list_contrib_components,
+    list_exporter_catalog,
+    resolve_exporter,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "otel-collector" / "config.yaml"
 GENERATED_CONFIG_PATH = Path(
     os.environ.get("COLLECTOR_CONFIG_PATH", str(REPO_ROOT / "otel-collector" / "generated-config.yaml")),
 )
-
-EXPORTER_TYPES = {
-    "prometheus": {
-        "label": "Prometheus (expose :8889 for scrape)",
-        "description": "Built-in validation exporter; scraped by local Prometheus.",
-    },
-    "otlp_http": {
-        "label": "OTLP HTTP",
-        "description": "Forward metrics to an OTLP/HTTP endpoint.",
-    },
-    "otlp_grpc": {
-        "label": "OTLP gRPC",
-        "description": "Forward metrics to an OTLP/gRPC endpoint.",
-    },
-    "debug": {
-        "label": "Debug",
-        "description": "Log telemetry to collector stdout (verbose).",
-    },
-    "file": {
-        "label": "File (JSON)",
-        "description": "Write metrics to a JSON file inside the collector container.",
-    },
-}
-
-
-def _exporter_block(exporter_type: str, params: dict[str, Any]) -> dict[str, Any]:
-    if exporter_type == "prometheus":
-        return {
-            "endpoint": params.get("endpoint", "0.0.0.0:8889"),
-            "const_labels": params.get("const_labels", {"source": "bigip-metrics-exporter"}),
-        }
-    if exporter_type == "otlp_http":
-        endpoint = params.get("endpoint", "http://localhost:4318")
-        return {
-            "metrics_endpoint": params.get(
-                "metrics_endpoint",
-                f"{endpoint.rstrip('/')}/v1/metrics",
-            ),
-            "compression": params.get("compression", "gzip"),
-        }
-    if exporter_type == "otlp_grpc":
-        endpoint = params.get("endpoint", "localhost:4317")
-        return {
-            "endpoint": endpoint,
-            "compression": params.get("compression", "gzip"),
-            "tls": {"insecure": params.get("insecure", True)},
-        }
-    if exporter_type == "debug":
-        return {
-            "verbosity": params.get("verbosity", "basic"),
-            "sampling_initial": 5,
-            "sampling_thereafter": 200,
-        }
-    if exporter_type == "file":
-        return {
-            "path": params.get("path", "/tmp/bigip-metrics.json"),
-            "rotation": {"max_megabytes": 10, "max_days": 1, "max_backups": 2},
-        }
-    raise ValueError(f"Unsupported exporter type: {exporter_type}")
 
 
 def build_collector_config(
@@ -87,25 +36,28 @@ def build_collector_config(
     metric_exporters: list[str] = []
 
     if include_validation_prometheus:
-        exporters["prometheus/validation"] = _exporter_block("prometheus", {"endpoint": "0.0.0.0:8889"})
+        _, prom_block = resolve_exporter("prometheus", {"endpoint": "0.0.0.0:8889"})
+        exporters["prometheus/validation"] = prom_block
         metric_exporters.append("prometheus/validation")
 
-    type_aliases = {
-        "otlp_http": "otlphttp",
-        "otlp_grpc": "otlp",
-    }
     for idx, item in enumerate(selected_exporters):
         if not item.get("enabled", True):
             continue
         etype = item["type"]
         params = item.get("params") or {}
-        component = type_aliases.get(etype, etype)
-        key = f"{component}/{idx}"
-        exporters[key] = _exporter_block(etype, params)
+        if etype == "prometheus" and include_validation_prometheus:
+            # Avoid duplicate validation exporter; user prometheus adds extra instance
+            component, block = resolve_exporter(etype, params)
+            key = f"{component}/user{idx}"
+        else:
+            component, block = resolve_exporter(etype, params)
+            key = f"{component}/{idx}"
+        exporters[key] = block
         metric_exporters.append(key)
 
     if not metric_exporters:
-        exporters["prometheus/validation"] = _exporter_block("prometheus", {})
+        _, prom_block = resolve_exporter("prometheus", {})
+        exporters["prometheus/validation"] = prom_block
         metric_exporters.append("prometheus/validation")
 
     config = {
@@ -158,8 +110,11 @@ def write_collector_config(
     return path
 
 
-def list_exporter_catalog() -> list[dict[str, str]]:
-    return [
-        {"type": k, **v}
-        for k, v in EXPORTER_TYPES.items()
-    ]
+__all__ = [
+    "EXPORTER_TYPES",
+    "CONTRIB_EXPORTERS_REPO",
+    "build_collector_config",
+    "write_collector_config",
+    "list_exporter_catalog",
+    "list_contrib_components",
+]

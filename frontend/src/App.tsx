@@ -14,13 +14,48 @@ type ApiRow = {
   collect_metrics: string;
 };
 
-type ExporterCatalogItem = { type: string; label: string; description: string };
+type ExporterFieldSpec = {
+  name: string;
+  label: string;
+  field_type?: string;
+  default?: string | number | boolean;
+  required?: boolean;
+  placeholder?: string;
+  options?: string[];
+};
+
+type ExporterCatalogItem = {
+  type: string;
+  label: string;
+  description: string;
+  category?: string;
+  component?: string;
+  doc_url?: string;
+  fields?: ExporterFieldSpec[];
+};
+
+type ContribComponent = {
+  component: string;
+  folder: string;
+  doc_url: string;
+};
 
 type ExporterConfig = {
   type: string;
   enabled: boolean;
   params: Record<string, string | number | boolean>;
 };
+
+function defaultParamsForSpec(spec: ExporterCatalogItem | undefined): Record<string, string | number | boolean> {
+  if (!spec?.fields?.length) return {};
+  const out: Record<string, string | number | boolean> = {};
+  for (const f of spec.fields) {
+    if (f.default !== undefined && f.default !== "") {
+      out[f.name] = f.default;
+    }
+  }
+  return out;
+}
 
 type BigIPDevice = {
   session_id: string;
@@ -98,6 +133,11 @@ export default function App() {
   const [selectedEndpoints, setSelectedEndpoints] = useState<Set<string>>(new Set());
 
   const [catalog, setCatalog] = useState<ExporterCatalogItem[]>([]);
+  const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
+  const [contribComponents, setContribComponents] = useState<ContribComponent[]>([]);
+  const [contribRepoUrl, setContribRepoUrl] = useState(
+    "https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter",
+  );
   const [exporters, setExporters] = useState<ExporterConfig[]>(DEFAULT_EXPORTERS);
   const [collectorYaml, setCollectorYaml] = useState("");
 
@@ -148,13 +188,21 @@ export default function App() {
           apiFetch("/api/prometheus/control"),
         ]);
         const apiData = await readJson<{ apis: ApiRow[]; modules: string[] }>(apiRes);
-        const catData = await readJson<{ exporters: ExporterCatalogItem[] }>(catRes);
+        const catData = await readJson<{
+          exporters: ExporterCatalogItem[];
+          categories?: string[];
+          contrib_components?: ContribComponent[];
+          contrib_repo_url?: string;
+        }>(catRes);
         const promData = await readJson<Record<string, string>>(promRes);
         const promCtrl = await readJson<PromControl>(promCtrlRes);
         const runtime = await readJson<{ otlp_endpoint?: string }>(runtimeRes);
         setApis(apiData.apis);
         setModules(apiData.modules);
         setCatalog(catData.exporters);
+        setCatalogCategories(catData.categories ?? []);
+        setContribComponents(catData.contrib_components ?? []);
+        if (catData.contrib_repo_url) setContribRepoUrl(catData.contrib_repo_url);
         setPromHints(promData);
         setPromControl(promCtrl);
         if (runtime.otlp_endpoint) setOtlpEndpoint(runtime.otlp_endpoint);
@@ -365,13 +413,139 @@ export default function App() {
     });
   };
 
+  const catalogByType = useMemo(() => {
+    const m = new Map<string, ExporterCatalogItem>();
+    for (const c of catalog) m.set(c.type, c);
+    return m;
+  }, [catalog]);
+
   const addExporter = () => {
-    const first = catalog.find((c) => c.type !== "prometheus")?.type ?? "debug";
-    setExporters((prev) => [...prev, { type: first, enabled: true, params: {} }]);
+    const first = catalog.find((c) => c.type === "otlp_http") ?? catalog[0];
+    if (!first) return;
+    setExporters((prev) => [
+      ...prev,
+      { type: first.type, enabled: true, params: defaultParamsForSpec(first) },
+    ]);
   };
 
   const updateExporter = (idx: number, patch: Partial<ExporterConfig>) => {
     setExporters((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  };
+
+  const setExporterType = (idx: number, newType: string) => {
+    const spec = catalogByType.get(newType);
+    updateExporter(idx, { type: newType, params: defaultParamsForSpec(spec) });
+  };
+
+  const setExporterParam = (
+    idx: number,
+    name: string,
+    value: string | number | boolean,
+  ) => {
+    setExporters((prev) =>
+      prev.map((e, i) =>
+        i === idx ? { ...e, params: { ...e.params, [name]: value } } : e,
+      ),
+    );
+  };
+
+  const renderExporterFields = (exp: ExporterConfig, idx: number) => {
+    const spec = catalogByType.get(exp.type);
+    if (!spec?.fields?.length) return null;
+
+    return spec.fields.map((field) => {
+      const value = exp.params[field.name] ?? field.default ?? "";
+      const id = `exp-${idx}-${field.name}`;
+
+      if (field.field_type === "bool") {
+        return (
+          <label key={field.name} className="check">
+            <input
+              id={id}
+              type="checkbox"
+              checked={Boolean(value)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.checked)}
+            />
+            {field.label}
+          </label>
+        );
+      }
+
+      if (field.field_type === "select" && field.options?.length) {
+        return (
+          <div key={field.name} className="field">
+            <label htmlFor={id}>{field.label}</label>
+            <select
+              id={id}
+              value={String(value)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+            >
+              {field.options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      }
+
+      if (field.field_type === "textarea") {
+        return (
+          <div key={field.name} className="field field-full">
+            <label htmlFor={id}>{field.label}</label>
+            <textarea
+              id={id}
+              rows={5}
+              value={String(value)}
+              placeholder={field.placeholder}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+            />
+          </div>
+        );
+      }
+
+      if (field.name === "component" && exp.type === "contrib") {
+        return (
+          <div key={field.name} className="field">
+            <label htmlFor={id}>{field.label}</label>
+            <input
+              id={id}
+              list={`contrib-components-${idx}`}
+              value={String(value)}
+              placeholder={field.placeholder}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+            />
+            <datalist id={`contrib-components-${idx}`}>
+              {contribComponents.map((c) => (
+                <option key={c.component} value={c.component}>
+                  {c.folder}
+                </option>
+              ))}
+            </datalist>
+          </div>
+        );
+      }
+
+      return (
+        <div key={field.name} className="field">
+          <label htmlFor={id}>{field.label}</label>
+          <input
+            id={id}
+            type={field.field_type === "password" ? "password" : field.field_type === "number" ? "number" : "text"}
+            value={String(value)}
+            placeholder={field.placeholder}
+            onChange={(e) =>
+              setExporterParam(
+                idx,
+                field.name,
+                field.field_type === "number" ? Number(e.target.value) : e.target.value,
+              )
+            }
+          />
+        </div>
+      );
+    });
   };
 
   const removeExporter = (idx: number) => {
@@ -585,73 +759,70 @@ export default function App() {
       <section className="card">
         <h2>OpenTelemetry Collector exporters</h2>
         <p className="muted">
-          Configure collector export pipelines. A Prometheus exporter on port 8889 is always
-          included for local validation. After applying, restart the collector:{" "}
+          Forward metrics to{" "}
+          <a href={contribRepoUrl} target="_blank" rel="noreferrer">
+            OpenTelemetry Collector Contrib
+          </a>{" "}
+          exporters. A Prometheus exporter on port 8889 is always included for local validation.
+          After applying, restart the collector:{" "}
           <code>docker compose restart otel-collector</code>
         </p>
-        {exporters.map((exp, idx) => (
-          <div key={idx} className="exporter-row">
-            <div className="row">
-              <div className="field">
-                <label>Exporter type</label>
-                <select
-                  value={exp.type}
-                  onChange={(e) => updateExporter(idx, { type: e.target.value, params: {} })}
-                >
-                  {catalog.map((c) => (
-                    <option key={c.type} value={c.type}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+        {exporters.map((exp, idx) => {
+          const spec = catalogByType.get(exp.type);
+          return (
+            <div key={idx} className="exporter-row">
+              <div className="row">
+                <div className="field">
+                  <label>Exporter type</label>
+                  <select
+                    value={exp.type}
+                    onChange={(e) => setExporterType(idx, e.target.value)}
+                  >
+                    {(catalogCategories.length > 0
+                      ? catalogCategories
+                      : [...new Set(catalog.map((c) => c.category ?? "Other"))]
+                    ).map((cat) => (
+                      <optgroup key={cat} label={cat}>
+                        {catalog
+                          .filter((c) => (c.category ?? "Other") === cat)
+                          .map((c) => (
+                            <option key={c.type} value={c.type}>
+                              {c.label}
+                            </option>
+                          ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={exp.enabled}
+                    onChange={(e) => updateExporter(idx, { enabled: e.target.checked })}
+                  />
+                  Enabled
+                </label>
               </div>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={exp.enabled}
-                  onChange={(e) => updateExporter(idx, { enabled: e.target.checked })}
-                />
-                Enabled
-              </label>
+              {spec?.description && (
+                <p className="muted exporter-desc">
+                  {spec.description}
+                  {spec.doc_url && (
+                    <>
+                      {" "}
+                      <a href={spec.doc_url} target="_blank" rel="noreferrer">
+                        Docs
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
+              <div className="exporter-fields">{renderExporterFields(exp, idx)}</div>
+              <button type="button" className="btn btn-secondary" onClick={() => removeExporter(idx)}>
+                Remove
+              </button>
             </div>
-            {exp.type === "otlp_http" && (
-              <div className="field">
-                <label>OTLP HTTP endpoint (base URL)</label>
-                <input
-                  value={String(exp.params.endpoint ?? "http://localhost:4318")}
-                  onChange={(e) =>
-                    updateExporter(idx, { params: { ...exp.params, endpoint: e.target.value } })
-                  }
-                />
-              </div>
-            )}
-            {exp.type === "otlp_grpc" && (
-              <div className="field">
-                <label>OTLP gRPC endpoint (host:port)</label>
-                <input
-                  value={String(exp.params.endpoint ?? "localhost:4317")}
-                  onChange={(e) =>
-                    updateExporter(idx, { params: { ...exp.params, endpoint: e.target.value } })
-                  }
-                />
-              </div>
-            )}
-            {exp.type === "file" && (
-              <div className="field">
-                <label>File path (inside collector container)</label>
-                <input
-                  value={String(exp.params.path ?? "/tmp/bigip-metrics.json")}
-                  onChange={(e) =>
-                    updateExporter(idx, { params: { ...exp.params, path: e.target.value } })
-                  }
-                />
-              </div>
-            )}
-            <button type="button" className="btn btn-secondary" onClick={() => removeExporter(idx)}>
-              Remove
-            </button>
-          </div>
-        ))}
+          );
+        })}
         <div className="actions">
           <button type="button" className="btn btn-secondary" onClick={addExporter}>
             Add exporter

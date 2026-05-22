@@ -50,11 +50,12 @@ Stats endpoints (paths containing `/stats`) typically expose counters and gauges
 
 ## 3. Collector exporters (optional)
 
-The stack always exposes a Prometheus exporter on port **8889** for validation. Additional exporters are optional.
+The stack always exposes a Prometheus exporter on port **8889** for validation. Additional exporters use [OpenTelemetry Collector Contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter) components (Datadog, Kafka, Prometheus remote write, Splunk HEC, cloud backends, and more).
 
-1. In **OpenTelemetry Collector exporters**, add types as needed.
-2. Click **Apply collector config**.
-3. Restart the collector:
+1. In **OpenTelemetry Collector exporters**, choose a type (grouped by category) and fill in its fields.
+2. For exporters not in the list, use **Contrib exporter (custom YAML)**: pick the collector component name (e.g. `loadbalancing`, `zipkin`) and paste the YAML settings from upstream docs.
+3. Click **Apply collector config**.
+4. Restart the collector:
 
 ```bash
 # Ubuntu

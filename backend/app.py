@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 
 from backend.bigip_client import BigIPClient, BigIPError
 from backend.collector_config import (
+    CONTRIB_EXPORTERS_REPO,
     EXPORTER_TYPES,
     GENERATED_CONFIG_PATH,
     build_collector_config,
+    list_contrib_components,
     list_exporter_catalog,
     write_collector_config,
 )
@@ -356,7 +358,15 @@ def probe_endpoint(
 
 @app.get("/api/exporters/catalog")
 def exporters_catalog() -> dict[str, Any]:
-    return {"exporters": list_exporter_catalog(), "types": list(EXPORTER_TYPES)}
+    catalog = list_exporter_catalog()
+    categories = sorted({e["category"] for e in catalog})
+    return {
+        "exporters": catalog,
+        "categories": categories,
+        "types": list(EXPORTER_TYPES),
+        "contrib_components": list_contrib_components(),
+        "contrib_repo_url": CONTRIB_EXPORTERS_REPO,
+    }
 
 
 @app.get("/api/collector/config")
@@ -373,8 +383,11 @@ def get_collector_config() -> dict[str, Any]:
 def apply_collector_config(body: CollectorConfigBody) -> dict[str, Any]:
     global _collector_exporters
     _collector_exporters = [e.model_dump() for e in body.exporters]
-    path = write_collector_config(_collector_exporters)
-    cfg = build_collector_config(_collector_exporters)
+    try:
+        path = write_collector_config(_collector_exporters)
+        cfg = build_collector_config(_collector_exporters)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     restart = os.environ.get(
         "COLLECTOR_RESTART_HINT",
         "docker compose restart otel-collector",
