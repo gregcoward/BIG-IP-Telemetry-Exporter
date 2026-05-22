@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bigip-metrics
+  labels:
+    app.kubernetes.io/name: bigip-metrics-exporter
+    app.kubernetes.io/part-of: bigip-metrics-exporter

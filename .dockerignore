@@ -1,0 +1,9 @@
+.venv
+venv
+__pycache__
+.git
+frontend/node_modules
+frontend/dist
+*.md
+.k8s-secrets
+.DS_Store

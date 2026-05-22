@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bigip-metrics-backend
+  labels:
+    app.kubernetes.io/name: bigip-metrics-backend
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bigip-metrics-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bigip-metrics-backend
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: backend
+          image: bigip-metrics-exporter:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OTLP_HTTP_ENDPOINT
+              value: http://otel-collector.bigip-metrics.svc.cluster.local:4318
+            - name: PROMETHEUS_UI_URL
+              value: http://prometheus.bigip-metrics.svc.cluster.local:9090
+            - name: COLLECTOR_METRICS_URL
+              value: http://otel-collector.bigip-metrics.svc.cluster.local:8889/metrics
+            - name: COLLECTOR_CONFIG_PATH
+              value: /tmp/collector-config.yaml
+            - name: COLLECTOR_RESTART_HINT
+              value: kubectl -n bigip-metrics rollout restart deployment/otel-collector
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      # Pods must reach BIG-IP management IPs on your network (often outside the cluster).
+      # If polls fail with timeouts, confirm routing/NP/firewall from the pod network to BIG-IP:443.

@@ -93,18 +93,21 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [apiRes, catRes, promRes] = await Promise.all([
+        const [apiRes, catRes, promRes, runtimeRes] = await Promise.all([
           apiFetch("/api/apis?metrics_only=false"),
           apiFetch("/api/exporters/catalog"),
           apiFetch("/api/validation/prometheus"),
+          apiFetch("/api/runtime-config"),
         ]);
         const apiData = await readJson<{ apis: ApiRow[]; modules: string[] }>(apiRes);
         const catData = await readJson<{ exporters: ExporterCatalogItem[] }>(catRes);
         const promData = await readJson<Record<string, string>>(promRes);
+        const runtime = await readJson<{ otlp_endpoint?: string }>(runtimeRes);
         setApis(apiData.apis);
         setModules(apiData.modules);
         setCatalog(catData.exporters);
         setPromHints(promData);
+        if (runtime.otlp_endpoint) setOtlpEndpoint(runtime.otlp_endpoint);
         const defaults = apiData.apis
           .filter((a) => a.collect_metrics === "true")
           .map((a) => a.endpoint);

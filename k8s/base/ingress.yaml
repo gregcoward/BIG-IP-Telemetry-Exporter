@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bigip-metrics
+  annotations:
+    # Adjust for your ingress controller (examples):
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    # nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: bigip-metrics.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bigip-metrics-backend
+                port:
+                  number: 8000
+    - host: prometheus.bigip-metrics.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090

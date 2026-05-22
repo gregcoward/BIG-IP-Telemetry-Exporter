@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Point at your container registry after building the backend image.
+images:
+  - name: bigip-metrics-exporter
+    newName: ghcr.io/gregcoward/bigip-metrics-exporter
+    newTag: "1.0.0"
+
+patches:
+  - target:
+      kind: Ingress
+      name: bigip-metrics
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: bigip-metrics.mycompany.example
+      - op: replace
+        path: /spec/rules/1/host
+        value: prometheus.bigip-metrics.mycompany.example

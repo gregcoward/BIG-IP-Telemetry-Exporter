@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import secrets
 import time
 from dataclasses import dataclass
@@ -29,6 +30,15 @@ from backend.otel_export import MetricsExportLoop, OTLPMetricsPusher
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APIS_CSV = REPO_ROOT / "data" / "bigip_apis.csv"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+DEFAULT_OTLP_ENDPOINT = os.environ.get(
+    "OTLP_HTTP_ENDPOINT",
+    "http://127.0.0.1:4318",
+)
+PROMETHEUS_UI_URL = os.environ.get("PROMETHEUS_UI_URL", "http://127.0.0.1:9090")
+COLLECTOR_METRICS_URL = os.environ.get(
+    "COLLECTOR_METRICS_URL",
+    "http://127.0.0.1:8889/metrics",
+)
 
 SESSION_TTL_SEC = 45 * 60
 
@@ -124,6 +134,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/runtime-config")
+def runtime_config() -> dict[str, str]:
+    """Defaults for the UI (OTLP target, validation URLs) — overridden in Kubernetes via env."""
+    return {
+        "otlp_endpoint": DEFAULT_OTLP_ENDPOINT,
+        "prometheus_ui": PROMETHEUS_UI_URL,
+        "collector_metrics": COLLECTOR_METRICS_URL,
+        "collector_config_path": str(GENERATED_CONFIG_PATH),
+    }
+
+
 @app.get("/api/apis")
 def list_apis(
     metrics_only: bool = False,
@@ -205,11 +226,20 @@ def apply_collector_config(body: CollectorConfigBody) -> dict[str, Any]:
     _collector_exporters = [e.model_dump() for e in body.exporters]
     path = write_collector_config(_collector_exporters)
     cfg = build_collector_config(_collector_exporters)
+    restart = os.environ.get(
+        "COLLECTOR_RESTART_HINT",
+        "docker compose restart otel-collector",
+    )
     return {
         "ok": True,
         "path": str(path),
         "yaml": _yaml_dump(cfg),
-        "restart_command": "docker compose restart otel-collector",
+        "restart_command": restart,
+        "k8s_apply_hint": (
+            "kubectl -n bigip-metrics create configmap otel-collector-config "
+            "--from-file=config.yaml=<path> --dry-run=client -o yaml | kubectl apply -f - "
+            "&& kubectl -n bigip-metrics rollout restart deployment/otel-collector"
+        ),
     }
 
 
@@ -276,9 +306,9 @@ def export_stop() -> dict[str, Any]:
 @app.get("/api/validation/prometheus")
 def prometheus_hints() -> dict[str, str]:
     return {
-        "prometheus_ui": "http://127.0.0.1:9090",
-        "collector_metrics": "http://127.0.0.1:8889/metrics",
-        "query_example": 'bigip_tm_ltm_virtual_stats',
+        "prometheus_ui": PROMETHEUS_UI_URL,
+        "collector_metrics": COLLECTOR_METRICS_URL,
+        "query_example": "bigip_tm_ltm_virtual_stats",
         "scrape_job": "otel-collector",
     }
 
