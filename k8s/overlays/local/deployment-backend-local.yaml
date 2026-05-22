@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bigip-metrics-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          # Do not pull from Docker Hub — load the image into the cluster first.
+          imagePullPolicy: Never

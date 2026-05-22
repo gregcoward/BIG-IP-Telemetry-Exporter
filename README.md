@@ -137,19 +137,30 @@ flowchart TB
 ### Prerequisites
 
 - Kubernetes cluster (1.25+) and `kubectl`
-- Ability to **build and push** the backend image to a registry your cluster can pull from
+- **Backend image** built on your machine (and loaded into the cluster or pushed to a registry — it is **not** on Docker Hub)
 - **Network access** from pods to your BIG-IP management IP(s)
 
-### Quick install
+### Quick install (local cluster)
+
+For kind, minikube, k3d, or Docker Desktop Kubernetes:
 
 ```bash
-# 1. Build the application image (API + embedded React UI)
-chmod +x scripts/k8s-build-image.sh scripts/k8s-deploy.sh scripts/k8s-apply-collector-config.sh
+chmod +x scripts/k8s-*.sh
 ./scripts/k8s-build-image.sh
-# docker tag + push to your registry, then edit k8s/overlays/example/kustomization.yaml
+./scripts/k8s-load-image.sh          # skip if load script warns; Docker Desktop may work without it
+./scripts/k8s-deploy.sh local        # imagePullPolicy: Never — uses your local image
+```
 
-# 2. Deploy (minimal overlay = no Ingress; use port-forward)
-./scripts/k8s-deploy.sh minimal
+### Quick install (registry)
+
+When nodes pull from GHCR, ECR, ACR, etc.:
+
+```bash
+./scripts/k8s-build-image.sh
+export IMAGE=ghcr.io/<you>/bigip-metrics-exporter:1.0.0
+docker tag bigip-metrics-exporter:latest "${IMAGE}"
+docker push "${IMAGE}"
+IMAGE="${IMAGE}" ./scripts/k8s-deploy.sh minimal
 
 # 3. Open the UI
 kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000
@@ -171,14 +182,11 @@ kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090
 | Path | Description |
 |------|-------------|
 | [`k8s/base/`](k8s/base/) | Namespace, ConfigMaps, Deployments, Services, sample Ingress |
-| [`k8s/overlays/minimal/`](k8s/overlays/minimal/) | Base stack **without** Ingress (recommended first install) |
-| [`k8s/overlays/example/`](k8s/overlays/example/) | Example registry image + Ingress hostnames |
+| [`k8s/overlays/local/`](k8s/overlays/local/) | **Local image** (`imagePullPolicy: Never`) — use after `k8s-build-image.sh` + `k8s-load-image.sh` |
+| [`k8s/overlays/minimal/`](k8s/overlays/minimal/) | No Ingress; requires `IMAGE=<registry>/...` when deploying |
+| [`k8s/overlays/example/`](k8s/overlays/example/) | Example registry + Ingress hostnames |
 
-Apply directly:
-
-```bash
-kubectl apply -k k8s/overlays/minimal
-```
+Do not apply `minimal` without pushing an image first — `bigip-metrics-exporter:latest` is not published to `docker.io`.
 
 ### Post-install workflow
 

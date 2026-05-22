@@ -18,6 +18,7 @@ spec:
     spec:
       containers:
         - name: backend
+          # Not published to Docker Hub — build locally (overlay: local) or set IMAGE when deploying.
           image: bigip-metrics-exporter:latest
           imagePullPolicy: IfNotPresent
           ports:

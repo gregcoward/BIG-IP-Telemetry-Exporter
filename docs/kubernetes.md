@@ -49,27 +49,35 @@ docker tag bigip-metrics-exporter:latest ghcr.io/<org>/bigip-metrics-exporter:1.
 docker push ghcr.io/<org>/bigip-metrics-exporter:1.0.0
 ```
 
-Edit `k8s/overlays/example/kustomization.yaml` (or create your own overlay) and set the `images` entry to your registry path.
-
 ### 2. Choose an overlay
 
 | Overlay | Use when |
 |---------|----------|
-| `minimal` | No Ingress controller; use `kubectl port-forward` |
-| `example` | You have Ingress and want sample hostnames + registry |
-| `base` | Apply directly with `kubectl apply -k k8s/base` |
+| **`local`** | You built the image locally and loaded it into kind/minikube/k3d (or Docker Desktop) |
+| `minimal` | Image is in a **registry**; set `IMAGE=...` when running `k8s-deploy.sh` |
+| `example` | Registry + Ingress hostnames (edit `kustomization.yaml`) |
+| `base` | Raw manifests; same image requirements as `minimal` |
+
+> **Important:** `bigip-metrics-exporter:latest` is **not** on Docker Hub. An unqualified name resolves to `docker.io/library/bigip-metrics-exporter`, which causes `ErrImagePull` / `authorization failed`.
 
 ### 3. Deploy
 
+**Local image (recommended for dev):**
+
 ```bash
-chmod +x scripts/k8s-deploy.sh
-./scripts/k8s-deploy.sh minimal
+chmod +x scripts/k8s-build-image.sh scripts/k8s-load-image.sh scripts/k8s-deploy.sh
+./scripts/k8s-build-image.sh
+./scripts/k8s-load-image.sh
+./scripts/k8s-deploy.sh local
 ```
 
-Or with Kustomize directly:
+**Registry:**
 
 ```bash
-kubectl apply -k k8s/overlays/minimal
+export IMAGE=ghcr.io/<org>/bigip-metrics-exporter:1.0.0
+docker tag bigip-metrics-exporter:latest "${IMAGE}"
+docker push "${IMAGE}"
+IMAGE="${IMAGE}" ./scripts/k8s-deploy.sh minimal
 ```
 
 ### 4. Access the UI and Prometheus
@@ -173,7 +181,8 @@ kubectl delete -k k8s/overlays/minimal
 
 | Symptom | Check |
 |---------|--------|
-| Backend `ImagePullBackOff` | Build/push image; fix `images` in kustomization |
+| `ErrImagePull` / `authorization failed` for `bigip-metrics-exporter` | Image is not on Docker Hub. Use `./scripts/k8s-deploy.sh local` after build+load, or `IMAGE=<registry>/... ./scripts/k8s-deploy.sh minimal` after push |
+| Backend `ImagePullBackOff` | Same as above; `kubectl describe pod` → Events |
 | No metrics in Prometheus | `kubectl logs deploy/otel-collector`; export started in UI? |
 | OTLP errors in backend logs | Service `otel-collector` endpoints; port 4318 |
 | BIG-IP login fails | Network/firewall; TLS verify setting |
