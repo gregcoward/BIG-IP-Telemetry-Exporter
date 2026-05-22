@@ -25,6 +25,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
   - [Step 2 — Deploy the stack](#step-2--deploy-the-stack)
   - [Step 3 — Open the UI and Prometheus](#step-3--open-the-ui-and-prometheus)
   - [Step 4 — Use the application](#step-4--use-the-application-on-kubernetes)
+  - [Step 5 — Uninstall](#step-5--uninstall)
   - [Manifests and overlays](#manifests-and-overlays)
   - [Kubernetes troubleshooting](#kubernetes-troubleshooting)
 - [Access from other machines](#access-from-other-machines)
@@ -263,7 +264,7 @@ flowchart TB
 ```bash
 git clone https://github.com/gregcoward/BIG-IP-Metrics-Exporter.git
 cd BIG-IP-Metrics-Exporter
-chmod +x scripts/k8s-*.sh
+chmod +x scripts/k8s-*.sh   # build, deploy, apply-collector-config, uninstall
 ./scripts/k8s-build-image.sh
 ```
 
@@ -330,6 +331,37 @@ kubectl -n bigip-metrics port-forward --address 0.0.0.0 svc/prometheus 9090:9090
 5. **Start export** — backend uses in-cluster OTLP: `http://otel-collector.bigip-metrics.svc.cluster.local:4318`.
 6. Validate in Prometheus at **`http://<HOST-IP>:9090`**.
 
+### Step 5 — Uninstall
+
+Use the **same overlay** you deployed with (`local`, `minimal`, or `example`):
+
+```bash
+./scripts/k8s-uninstall.sh local
+```
+
+Skip the confirmation prompt:
+
+```bash
+./scripts/k8s-uninstall.sh local -y
+```
+
+Remove workloads but keep the namespace (for redeploy later):
+
+```bash
+./scripts/k8s-uninstall.sh local --keep-namespace
+```
+
+Manual equivalent (deletes namespace and all resources):
+
+```bash
+kubectl delete -k k8s/overlays/local --wait
+```
+
+After uninstall:
+
+- Stop any `kubectl port-forward` sessions still running.
+- Optionally remove the local Docker image: `docker rmi bigip-metrics-exporter:latest`
+
 ### Manifests and overlays
 
 | Path | Description |
@@ -349,12 +381,6 @@ Do not deploy `minimal` without pushing an image — `bigip-metrics-exporter:lat
 | `401` / connect errors in UI | Pod network → BIG-IP management IP; TLS verify setting |
 | No metrics in Prometheus | Export started? `kubectl logs -n bigip-metrics deploy/otel-collector` |
 | Port-forward only on localhost | Add `--address 0.0.0.0` (see Step 3) |
-
-Uninstall:
-
-```bash
-kubectl delete -k k8s/overlays/local
-```
 
 ---
 

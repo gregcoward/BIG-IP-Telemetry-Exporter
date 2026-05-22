@@ -181,9 +181,37 @@ kubectl -n bigip-metrics rollout status deployment/bigip-metrics-backend
 
 ## Uninstall
 
+Use [`scripts/k8s-uninstall.sh`](../scripts/k8s-uninstall.sh) with the **same overlay** you used to deploy:
+
 ```bash
-kubectl delete -k k8s/overlays/minimal
-# Namespace is removed with the overlay resources
+chmod +x scripts/k8s-uninstall.sh
+./scripts/k8s-uninstall.sh local
+```
+
+| Option | Effect |
+|--------|--------|
+| `-y` / `--yes` | Skip confirmation |
+| `--keep-namespace` | Delete Deployments/Services/ConfigMaps/RBAC; leave `bigip-metrics` namespace |
+
+Examples:
+
+```bash
+./scripts/k8s-uninstall.sh minimal -y
+./scripts/k8s-uninstall.sh example --keep-namespace
+```
+
+Manual equivalent:
+
+```bash
+kubectl delete -k k8s/overlays/local --wait --timeout=180s
+```
+
+The namespace `bigip-metrics` and all workloads (otel-collector, prometheus, backend) are removed. Port-forward processes on your workstation are not stopped automatically — press Ctrl+C in those terminals.
+
+Optional cleanup on your build host:
+
+```bash
+docker rmi bigip-metrics-exporter:latest
 ```
 
 ## Troubleshooting
