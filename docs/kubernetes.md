@@ -77,11 +77,11 @@ kubectl apply -k k8s/overlays/minimal
 **Port-forward (minimal overlay):**
 
 ```bash
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8000:8000
+kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000
 kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090
 ```
 
-- UI + API: http://127.0.0.1:8000  
+- UI + API: http://127.0.0.1:8001 (local port **8001** → service port 8000)  
 - Prometheus: http://127.0.0.1:9090  
 
 **Ingress:** Update hosts in `k8s/base/ingress.yaml` or the `example` overlay patch, set `ingressClassName` for your controller, then apply an overlay that includes Ingress.
@@ -92,7 +92,7 @@ kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090
 2. Sync YAML into the cluster ConfigMap and restart the collector:
 
 ```bash
-# With backend port-forward running on :8000
+# With backend port-forward running on :8001
 chmod +x scripts/k8s-apply-collector-config.sh
 ./scripts/k8s-apply-collector-config.sh
 ```

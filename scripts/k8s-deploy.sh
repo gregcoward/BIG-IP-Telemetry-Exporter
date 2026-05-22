@@ -22,6 +22,6 @@ echo "Pods:"
 kubectl -n bigip-metrics get pods
 echo ""
 echo "Access UI (port-forward):"
-echo "  kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8000:8000"
+echo "  kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000"
 echo "Prometheus:"
 echo "  kubectl -n bigip-metrics port-forward svc/prometheus 9090:9090"

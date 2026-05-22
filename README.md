@@ -152,11 +152,11 @@ chmod +x scripts/k8s-build-image.sh scripts/k8s-deploy.sh scripts/k8s-apply-coll
 ./scripts/k8s-deploy.sh minimal
 
 # 3. Open the UI
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8000:8000
-# http://127.0.0.1:8000
+kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000
+# http://127.0.0.1:8001
 
 # 4. After configuring exporters in the UI, sync collector config:
-kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8000:8000 &
+kubectl -n bigip-metrics port-forward svc/bigip-metrics-backend 8001:8000 &
 ./scripts/k8s-apply-collector-config.sh
 ```
 
