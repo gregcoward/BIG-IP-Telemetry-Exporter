@@ -1,0 +1,85 @@
+category,endpoint,description,status,module,notes,collect_metrics
+,/mgmt/shared/authn/login,Authentication login,IMPLEMENTED,AUTH,Used for initial authentication Authentication & Token Management,false
+,/mgmt/shared/authz/tokens,Token management and extension,IMPLEMENTED,AUTH,Used for token lifecycle management LTM Core Components,false
+,/mgmt/tm/ltm/virtual,Virtual server configuration,IMPLEMENTED,LTM,Virtual server details LTM Core Components,false
+,/mgmt/tm/ltm/virtual/stats,Virtual server statistics,IMPLEMENTED,LTM,Performance metrics LTM Core Components,true
+,/mgmt/tm/ltm/pool,Pool configuration,IMPLEMENTED,LTM,Pool configuration details LTM Core Components,false
+,/mgmt/tm/ltm/pool/stats,Pool statistics,IMPLEMENTED,LTM,Pool performance metrics LTM Core Components,true
+,/mgmt/tm/ltm/node/stats,Node statistics,IMPLEMENTED,LTM,Node health and performance LTM Core Components,true
+,/mgmt/tm/ltm/rule,iRule configuration,IMPLEMENTED,LTM,iRule details LTM Core Components,false
+,/mgmt/tm/ltm/rule/stats,iRule statistics,IMPLEMENTED,LTM,iRule execution metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/client-ssl,Client SSL profile configuration,IMPLEMENTED,LTM,SSL profile settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/client-ssl/stats,Client SSL profile statistics,IMPLEMENTED,LTM,SSL performance metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/server-ssl,Server SSL profile configuration,IMPLEMENTED,LTM,Server-side SSL settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/server-ssl/stats,Server SSL profile statistics,IMPLEMENTED,LTM,Server SSL metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/fastl4,FastL4 profile configuration,IMPLEMENTED,LTM,Layer 4 acceleration LTM Profiles,false
+,/mgmt/tm/ltm/profile/fastl4/stats,FastL4 profile statistics,IMPLEMENTED,LTM,FastL4 performance LTM Profiles,true
+,/mgmt/tm/ltm/profile/fasthttp,FastHTTP profile configuration,IMPLEMENTED,LTM,HTTP acceleration LTM Profiles,false
+,/mgmt/tm/ltm/profile/fasthttp/stats,FastHTTP profile statistics,IMPLEMENTED,LTM,FastHTTP performance LTM Profiles,true
+,/mgmt/tm/ltm/profile/http,HTTP profile configuration,IMPLEMENTED,LTM,HTTP protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/http/stats,HTTP profile statistics,IMPLEMENTED,LTM,HTTP performance metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/http2,HTTP/2 profile configuration,IMPLEMENTED,LTM,HTTP/2 protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/http2/stats,HTTP/2 profile statistics,IMPLEMENTED,LTM,HTTP/2 performance LTM Profiles,true
+,/mgmt/tm/ltm/profile/http3,HTTP/3 profile configuration,IMPLEMENTED,LTM,HTTP/3 protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/http3/stats,HTTP/3 profile statistics,IMPLEMENTED,LTM,HTTP/3 performance LTM Profiles,true
+,/mgmt/tm/ltm/profile/tcp,TCP profile configuration,IMPLEMENTED,LTM,TCP protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/tcp/stats,TCP profile statistics,IMPLEMENTED,LTM,TCP performance metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/udp,UDP profile configuration,IMPLEMENTED,LTM,UDP protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/udp/stats,UDP profile statistics,IMPLEMENTED,LTM,UDP performance metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/one-connect,OneConnect profile configuration,IMPLEMENTED,LTM,Connection multiplexing LTM Profiles,false
+,/mgmt/tm/ltm/profile/one-connect/stats,OneConnect profile statistics,IMPLEMENTED,LTM,OneConnect performance LTM Profiles,true
+,/mgmt/tm/ltm/profile/web-acceleration,Web acceleration profile configuration,IMPLEMENTED,LTM,Web acceleration settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/web-acceleration/stats,Web acceleration profile statistics,IMPLEMENTED,LTM,Web acceleration metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/quic,QUIC profile configuration,IMPLEMENTED,LTM,QUIC protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/quic/stats,QUIC profile statistics,IMPLEMENTED,LTM,QUIC performance metrics LTM Profiles,true
+,/mgmt/tm/ltm/profile/dns,DNS profile configuration,IMPLEMENTED,LTM,DNS protocol settings LTM Profiles,false
+,/mgmt/tm/ltm/profile/dns/stats,DNS profile statistics,IMPLEMENTED,LTM,DNS performance metrics Security Module,true
+,/mgmt/tm/security/shared-objects/address-list,Security address lists,IMPLEMENTED,SECURITY,IP address groupings Security Module,false
+,/mgmt/tm/security/firewall/policy,Network firewall policies,IMPLEMENTED,SECURITY,Firewall policy configuration Security Module,false
+,/mgmt/tm/security/firewall/policy/stats,Firewall policy statistics,IMPLEMENTED,SECURITY,Firewall performance metrics Security Module,true
+,/mgmt/tm/security/firewall/rule-stat/stats,Firewall rule statistics,IMPLEMENTED,SECURITY,Rule hit statistics Security Module,true
+,/mgmt/tm/security/ip-intelligence/policy,IP intelligence policies,IMPLEMENTED,SECURITY,IP reputation policies Security Module,false
+,/mgmt/tm/security/nat/policy,NAT security policies,IMPLEMENTED,SECURITY,NAT policy configuration Security Module,false
+,/mgmt/tm/security/bot-defense,Bot defense configuration,IMPLEMENTED,SECURITY,Bot protection settings Security Module,false
+,/mgmt/tm/security/dos/profile,DoS protection profiles,IMPLEMENTED,SECURITY,DoS protection configuration Security Module,false
+,/mgmt/tm/security/dos/device-config/stats,DoS protection statistics,IMPLEMENTED,SECURITY,DoS protection metrics Security Module,true
+,/mgmt/tm/asm/policies,ASM security policies,IMPLEMENTED,SECURITY,Application security policies Security Module,false
+,/mgmt/tm/asm/events,ASM security events,IMPLEMENTED,SECURITY,Security incident tracking Security Module,false
+,/mgmt/tm/api-protection/profile/apiprotection,API protection policies,IMPLEMENTED,API_PROTECTION,API security configuration Security Module,false
+,/mgmt/tm/api-protection/profile/apiprotection/stats,API protection statistics,IMPLEMENTED,API_PROTECTION,API protection metrics System Management,true
+,/mgmt/tm/sys/file/ssl-cert,SSL certificate management,IMPLEMENTED,SYS,Certificate lifecycle System Management,false
+,/mgmt/tm/cm/device,Device management,IMPLEMENTED,CM,Device state and configuration System Management,false
+,/mgmt/tm/sys/cpu,CPU statistics,IMPLEMENTED,SYS,System CPU metrics System Management,true
+,/mgmt/tm/sys/memory,Memory statistics,IMPLEMENTED,SYS,System memory metrics System Management,true
+,/mgmt/tm/sys/proc-info,Process information,IMPLEMENTED,SYS,System process details System Management,false
+,/mgmt/tm/sys/disk/logical-disk,Logical disk information,IMPLEMENTED,SYS,Disk usage metrics System Management,false
+,/mgmt/tm/sys/disk/application-volume,Application volume information,IMPLEMENTED,SYS,Application storage metrics System Management,false
+,/mgmt/tm/sys/provision,Module provisioning,IMPLEMENTED,SYS,Licensed module status System Management,false
+,/mgmt/tm/sys/license,License information,IMPLEMENTED,SYS,License details and usage Network Management,false
+,/mgmt/tm/net/interface,Network interface configuration,IMPLEMENTED,NET,Interface details Network Management,false
+,/mgmt/tm/net/interface/stats,Network interface statistics,IMPLEMENTED,NET,Interface performance Network Management,true
+,/mgmt/tm/net/self,Self IP configuration,IMPLEMENTED,NET,Self IP addresses Network Management,false
+,/mgmt/tm/net/vlan/stats,VLAN statistics,IMPLEMENTED,NET,VLAN performance metrics Network Management,true
+,/mgmt/tm/net/bwc/policy,Bandwidth control policies,IMPLEMENTED,NET,Bandwidth management Network Management,false
+,/mgmt/tm/net/bwc/policy/stats,Bandwidth control statistics,IMPLEMENTED,NET,Bandwidth usage metrics GTM Module,true
+,/mgmt/tm/gtm/traffic/stats,GTM traffic statistics,IMPLEMENTED,GTM,Global traffic metrics GTM Module,true
+,/mgmt/tm/gtm/wideip/a,GTM A record wide IPs,IMPLEMENTED,GTM,DNS A record management GTM Module,false
+,/mgmt/tm/gtm/wideip/aaaa,GTM AAAA record wide IPs,IMPLEMENTED,GTM,DNS AAAA record management GTM Module,false
+,/mgmt/tm/gtm/wideip/cname,GTM CNAME record wide IPs,IMPLEMENTED,GTM,DNS CNAME management GTM Module,false
+,/mgmt/tm/gtm/wideip/mx,GTM MX record wide IPs,IMPLEMENTED,GTM,DNS MX record management GTM Module,false
+,/mgmt/tm/gtm/wideip/naptr,GTM NAPTR record wide IPs,IMPLEMENTED,GTM,DNS NAPTR management GTM Module,false
+,/mgmt/tm/gtm/wideip/srv,GTM SRV record wide IPs,IMPLEMENTED,GTM,DNS SRV record management GTM Module,false
+,/mgmt/tm/gtm/distributed-app,GTM distributed applications,IMPLEMENTED,GTM,Distributed app configuration GTM Module,false
+,/mgmt/tm/gtm/rule,GTM rules,IMPLEMENTED,GTM,GTM rule configuration GTM Module,false
+,/mgmt/tm/gtm/server,GTM servers,IMPLEMENTED,GTM,GTM server management GTM Module,false
+,/mgmt/tm/gtm/listener,GTM listeners,IMPLEMENTED,GTM,GTM listener configuration Advanced Features,false
+,/mgmt/tm/ltm/eviction-policy,Eviction policy configuration,IMPLEMENTED,LTM,Memory management policies Advanced Features,false
+,/mgmt/tm/ltm/eviction-policy/stats,Eviction policy statistics,IMPLEMENTED,LTM,Eviction performance metrics Advanced Features,true
+,/mgmt/tm/ltm/lsn-pool,CGNAT LSN pools,IMPLEMENTED,LTM,Carrier-grade NAT pools Advanced Features,false
+,/mgmt/tm/ltm/lsn-pool/stats,CGNAT LSN pool statistics,IMPLEMENTED,LTM,CGNAT performance metrics Advanced Features,true
+,/mgmt/tm/ltm/dns/cache/resolver/stats,DNS resolver cache statistics,IMPLEMENTED,LTM,DNS cache performance Advanced Features,true
+,/mgmt/tm/ltm/dns/zone/stats,DNS zone statistics,IMPLEMENTED,LTM,DNS zone metrics Advanced Features,true
+,/mgmt/tm/sys/nethsm/pkcs11d-stat,NetHSM PKCS11d statistics,IMPLEMENTED,SYS,Hardware security module stats Advanced Features,true
+,/mgmt/tm/sys/nethsm/async-queue-stat,NetHSM async queue statistics,IMPLEMENTED,SYS,HSM queue performance Advanced Features,true
+,/mgmt/tm/apm/license,APM license information,IMPLEMENTED,APM,Access policy license usage Utility Functions,false
+,/mgmt/tm/util/bash,Bash command execution,IMPLEMENTED,UTIL,Custom command execution\,false

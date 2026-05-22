@@ -1,0 +1,45 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+exporters:
+  prometheus/validation:
+    endpoint: 0.0.0.0:8889
+    const_labels:
+      source: bigip-metrics-exporter
+  debug/0:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+service:
+  extensions:
+  - health_check
+  pipelines:
+    metrics:
+      receivers:
+      - otlp
+      processors:
+      - memory_limiter
+      - batch
+      exporters:
+      - prometheus/validation
+      - debug/0
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: basic
