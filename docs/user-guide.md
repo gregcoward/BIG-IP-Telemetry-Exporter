@@ -8,6 +8,19 @@ This document is the detailed companion to the [User guide section in README](..
 - OpenTelemetry Collector and Prometheus running (Docker Compose on Ubuntu, or cluster workloads on Kubernetes)
 - Network path from the **Python backend** to each BIG-IP management IP (HTTPS, typically port 443)
 
+After upgrading the repo, rebuild the UI when not using Vite dev mode: `cd frontend && npm ci && npm run build`, then restart the API.
+
+## UI layout
+
+| Area | Purpose |
+|------|---------|
+| **Connected status bar** | Live count, chip per connected BIG-IP, export selection summary, **Refresh list** (also auto-refreshes every 45s) |
+| **BIG-IP connections** | Manage sessions, check devices for export, connect form |
+| **API endpoints** | iControl REST path catalog |
+| **Collector exporters** | OpenTelemetry Collector Contrib sinks |
+| **Export to collector** | OTLP push from the Python backend |
+| **Prometheus validation** | Targets, queries, reload/restart |
+
 ## 1. Connect BIG-IP devices
 
 ### First device
@@ -16,13 +29,15 @@ This document is the detailed companion to the [User guide section in README](..
 2. In **BIG-IP connections**, enter **Management host**, **Username**, and **Password**.
 3. Optionally set a **Label** (shown in the device list).
 4. Uncheck **Verify TLS** if the management certificate is self-signed.
-5. Click **Connect**.
+5. Click **Connect** (the button stays disabled until host, username, and password are all provided).
 
 ### Additional devices
 
 1. Enter the next management host (and credentials if different).
-2. Click **Add BIG-IP**.
+2. Click **Add BIG-IP** (same required fields).
 3. Repeat for each device you want to monitor.
+
+The **Connected status bar** at the top always shows how many BIG-IPs are connected and lists each one. The connections card title includes the count, e.g. **BIG-IP connections (2 connected)**.
 
 ### Device list
 
@@ -133,8 +148,8 @@ Empty `session_ids` exports **all** connected devices. To target specific device
    bigip_tm_ltm_virtual_stats{bigip_host="10.0.0.50"}
    ```
 
-4. Use **Reload Prometheus (wipe data)** in the UI to clear historical metrics and reload scrape config (recreates the Docker container or Kubernetes pod, then calls `/-/reload`).
-5. Use **Restart Prometheus** for a recycle without the explicit reload step.
+4. Use **Reload Prometheus (wipe data)** in the UI to clear TSDB and reload scrape config. By default this recreates the Prometheus container (Docker) or pod (Kubernetes), or deletes all series via the admin API when orchestration tools are unavailable. Set backend env `PROMETHEUS_RELOAD_WIPE_TSDB=false` to reload config only.
+5. Use **Restart Prometheus** for a recreate without the separate `/-/reload` step.
 
 ## Multi-BIG-IP reference
 

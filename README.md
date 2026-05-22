@@ -8,6 +8,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
 
 - [Architecture](#architecture)
 - [User guide](#user-guide)
+  - [UI overview](#ui-overview)
 - [Installation options](#installation-options)
 - [Install on Ubuntu Linux (without Kubernetes)](#install-on-ubuntu-linux-without-kubernetes)
   - [Prerequisites](#prerequisites)
@@ -33,6 +34,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
 - [User guide (detailed)](docs/user-guide.md)
 - [API catalog](#api-catalog)
 - [Collector exporters (UI)](#collector-exporters-ui)
+- [Backend environment variables (optional)](#backend-environment-variables-optional)
 - [Repository](#repository)
 - [License](#license)
 
@@ -53,7 +55,7 @@ flowchart LR
 | **Python backend** | Authenticates to one or more BIG-IPs, polls selected `/mgmt/...` endpoints per device, converts nested stats to metric points tagged with `bigip.host`, pushes OTLP HTTP to the collector |
 | **OTEL Collector** | Receives OTLP; processes with batch/memory_limiter; exposes Prometheus exporter on `:8889` plus any UI-configured exporters |
 | **Prometheus** | Scrapes `otel-collector:8889` to confirm metrics flowed through the collector |
-| **React frontend** | Multi-device connections, API catalog, exporter configuration, export control |
+| **React frontend** | Connected-device status bar, multi-BIG-IP sessions, API catalog, contrib exporter configuration, export and Prometheus controls |
 
 ## User guide
 
@@ -77,6 +79,17 @@ flowchart TD
 | 4 | **Export to collector** | Periodic poll → OTLP HTTP → collector → Prometheus scrape |
 | 5 | **Prometheus validation** | Confirm targets up and query metrics |
 
+### UI overview
+
+| Area | What it shows |
+|------|----------------|
+| **Connected status bar** (top) | Count of connected BIG-IPs, a chip per device (label + management IP), how many are checked for export, **Refresh list**, and auto-refresh every 45 seconds |
+| **BIG-IP connections** | Full device list with export checkboxes, **Remove**, and the connect form |
+| **Export to collector** | How many devices are selected (`X of Y connected`) |
+| **Prometheus validation** | Links, example queries, reload/restart controls |
+
+After `git pull`, rebuild the UI if you serve production assets: `cd frontend && npm ci && npm run build`, then restart the API.
+
 ### 1. Connect BIG-IP devices
 
 Open the UI (`http://<HOST-IP>:8001` on Ubuntu, or port-forward on Kubernetes).
@@ -88,10 +101,13 @@ Open the UI (`http://<HOST-IP>:8001` on Ubuntu, or port-forward on Kubernetes).
 | **Username / Password** | Account with iControl REST access (often `admin`). |
 | **Verify TLS** | Uncheck for default self-signed BIG-IP management certificates. |
 
+- **Connect** / **Add BIG-IP** — enabled only when **management host**, **username**, and **password** are all filled in.
 - **Connect** — first device.
 - **Add BIG-IP** — additional devices without disconnecting others.
 - **Remove** — logs out and drops that session (`DELETE /api/session/{id}`).
 - Reconnecting the **same host** replaces the previous session for that IP.
+
+The page always shows how many BIG-IPs are connected (status bar and section title). With zero devices, the status bar reads **No BIG-IPs connected** and the list shows an empty-state message.
 
 Each connected device appears in a list with:
 
@@ -168,10 +184,15 @@ REST equivalent: `POST /api/export/start` with body `{ "session_ids": ["..."], "
 
    (Exact label names depend on the collector Prometheus exporter; search `bigip_` in the UI or use **Graph** autocomplete.)
 
-3. **Reload Prometheus (wipe data)** — recreates Prometheus storage (clears TSDB), then reloads scrape config (`--web.enable-lifecycle` is enabled in `docker-compose.yml`).
-4. **Restart Prometheus** — same container/pod recycle without a separate config reload step.
+3. **Reload Prometheus (wipe data)** — clears TSDB, then reloads scrape config (`--web.enable-lifecycle` is enabled in `docker-compose.yml`):
+   - **Docker Compose:** stop/remove/recreate the `prometheus` container (empty `/prometheus`).
+   - **Kubernetes** (with `kubectl` on the API host): `rollout restart` the Prometheus deployment (fresh `emptyDir`).
+   - **Otherwise** (e.g. in-cluster API): deletes all series via Prometheus admin API, then `POST /-/reload`.
+4. **Restart Prometheus** — recreates the container/pod without calling `/-/reload`.
 
-On Ubuntu, restart uses `docker compose restart prometheus`. On Kubernetes, the API runs `kubectl rollout restart deployment/prometheus` in namespace `bigip-metrics`.
+Set `PROMETHEUS_RELOAD_WIPE_TSDB=false` on the backend to reload **config only** and keep historical metrics. Custom wipe: `PROMETHEUS_RELOAD_WIPE_CMD`.
+
+On Ubuntu, restart uses the same recreate path as reload wipe. On Kubernetes, the API runs `kubectl rollout restart deployment/prometheus` in namespace `bigip-metrics` when `kubectl` is available.
 
 ### Multi-BIG-IP behavior
 
@@ -195,9 +216,11 @@ On Ubuntu, restart uses `docker compose restart prometheus`. On Kubernetes, the 
 | `POST` | `/api/export/start` | Start multi-device export |
 | `POST` | `/api/export/stop` | Stop export |
 | `GET` | `/api/export/status` | Loop status + connected devices |
+| `GET` | `/api/exporters/catalog` | Collector contrib exporter types and form fields |
 | `GET` / `POST` | `/api/collector/config` | Read/write collector YAML |
-| `POST` | `/api/prometheus/reload` | Prometheus `/-/reload` |
-| `POST` | `/api/prometheus/restart` | Restart Prometheus (docker/k8s) |
+| `GET` | `/api/prometheus/control` | Reload/restart availability and hints |
+| `POST` | `/api/prometheus/reload` | Wipe TSDB (default), then `/-/reload` |
+| `POST` | `/api/prometheus/restart` | Recreate Prometheus (docker/k8s) |
 
 ### Common issues (user-facing)
 
@@ -337,7 +360,7 @@ echo "UI: http://${HOST_IP}:8001"
 Follow the **[User guide](#user-guide)**. Quick checklist:
 
 1. Open **`http://<HOST-IP>:8001`**.
-2. **BIG-IP connections** — connect devices; use **Add BIG-IP** for more; check devices to export.
+2. **BIG-IP connections** — fill host, username, and password, then **Connect**; use **Add BIG-IP** for more; confirm devices in the status bar and check which to export.
 3. **API endpoints** — select stats paths (defaults are pre-selected).
 4. **Collector exporters** (optional) → **Apply collector config** → `docker compose restart otel-collector`.
 5. **Export** — OTLP `http://127.0.0.1:4318` → **Start export**.
@@ -593,6 +616,20 @@ After **Apply collector config**, restart the collector:
 - **Kubernetes:** `./scripts/k8s-apply-collector-config.sh`
 
 Generated config file: `otel-collector/generated-config.yaml`
+
+Catalog API: `GET /api/exporters/catalog` (categories, field schemas, links to [contrib exporter docs](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter)).
+
+## Backend environment variables (optional)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `8001` (local), `8000` (Docker/K8s image) | API listen port |
+| `OTLP_HTTP_ENDPOINT` | `http://127.0.0.1:4318` | Default OTLP URL in UI (K8s manifest overrides) |
+| `PROMETHEUS_RELOAD_WIPE_TSDB` | `true` | When true, **Reload Prometheus** wipes TSDB before `/-/reload` |
+| `PROMETHEUS_RELOAD_WIPE_CMD` | *(unset)* | Custom shell command to wipe TSDB before reload |
+| `PROMETHEUS_RESTART_MODE` | `docker` / `kubernetes` / auto | How reload/restart recreates Prometheus |
+| `PROMETHEUS_K8S_NAMESPACE` | `bigip-metrics` | Namespace for `kubectl rollout restart` |
+| `COLLECTOR_CONFIG_PATH` | `otel-collector/generated-config.yaml` | Path written by **Apply collector config** |
 
 ## Repository
 
