@@ -38,21 +38,34 @@ class OTLPMetricsPusher:
         self._instruments: dict[str, Any] = {}
         self._provider = provider
 
+    @staticmethod
+    def _otel_attributes(raw: dict[str, Any]) -> dict[str, str]:
+        """OTLP/Prometheus labels: string attributes on each data point."""
+        out: dict[str, str] = {}
+        for key, val in raw.items():
+            if val is None:
+                continue
+            out[str(key)] = str(val)
+        return out
+
     def record_batch(self, points: list[dict[str, Any]]) -> int:
         count = 0
         for pt in points:
-            host = pt.get("attributes", {}).get("bigip.host", "unknown")
             name = pt["name"]
-            key = f"{host}::{name}"
-            if key not in self._instruments:
-                safe = name.replace(".", "_")[:100]
-                self._instruments[key] = self._meter.create_up_down_counter(
+            safe = name.replace(".", "_")[:100]
+            if safe not in self._instruments:
+                host = pt.get("attributes", {}).get("bigip.host", "unknown")
+                self._instruments[safe] = self._meter.create_up_down_counter(
                     safe,
                     description=f"BIG-IP metric {name} ({host})",
                 )
-            inst = self._instruments[key]
+            inst = self._instruments[safe]
             value = pt["value"]
-            inst.add(int(value) if float(value).is_integer() else value)
+            attrs = self._otel_attributes(pt.get("attributes") or {})
+            inst.add(
+                int(value) if float(value).is_integer() else value,
+                attributes=attrs,
+            )
             count += 1
         return count
 
@@ -103,12 +116,15 @@ class MetricsExportLoop:
         errors: list[str] = []
         errors_by_host: dict[str, list[str]] = {}
 
-        for host, _sid, client in self._clients:
+        for host, sid, client in self._clients:
             host_errors: list[str] = []
             for ep in self._endpoints:
                 try:
                     payload = client.get(ep)
                     points = extract_metrics(ep, payload, bigip_host=host)
+                    for point in points:
+                        point.setdefault("attributes", {})
+                        point["attributes"]["bigip.session_id"] = sid
                     total += self._pusher.record_batch(points)
                 except Exception as exc:  # noqa: BLE001
                     msg = f"{ep}: {exc}"

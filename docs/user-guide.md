@@ -142,11 +142,20 @@ Empty `session_ids` exports **all** connected devices. To target specific device
 
 1. **Status → Targets** — `otel-collector` job should be **UP**.
 2. Run a broad query: `bigip_tm_ltm_virtual_stats` or search `bigip_`.
-3. With multiple devices, filter by host label:
+3. With multiple devices, filter by host label. Each point includes metadata that becomes Prometheus labels:
+
+   | Label | Meaning |
+   |-------|---------|
+   | `bigip_host` | BIG-IP management address for the poll |
+   | `bigip_endpoint` | iControl REST path |
+   | `bigip_object` | Stats object name in the payload |
+   | `bigip_session_id` | Exporter session for that device |
 
    ```promql
    bigip_tm_ltm_virtual_stats{bigip_host="10.0.0.50"}
    ```
+
+   If `bigip_host` is missing on series, upgrade the exporter and restart **Start export** (older code did not attach labels to OTLP recordings).
 
 4. Use **Reload Prometheus (wipe data)** in the UI to clear TSDB and reload scrape config. By default this recreates the Prometheus container (Docker) or pod (Kubernetes), or deletes all series via the admin API when orchestration tools are unavailable. Set backend env `PROMETHEUS_RELOAD_WIPE_TSDB=false` to reload config only.
 5. Use **Restart Prometheus** for a recreate without the separate `/-/reload` step.
@@ -157,7 +166,7 @@ Empty `session_ids` exports **all** connected devices. To target specific device
 |-------|--------|
 | API list devices | `GET /api/bigips` or `GET /api/devices` |
 | Connect | `POST /api/connect` with optional `label` |
-| Metric collision | Prevented via per-host OTLP instrument keys |
+| Metric collision | Prevented via `bigip_host` (and related) labels on each OTLP data point |
 | Export scope (UI) | Checked devices only |
 | Export scope (API) | `session_ids` array; empty = all connected |
 

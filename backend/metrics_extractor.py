@@ -58,6 +58,7 @@ def _walk_nested_stats(
                     "bigip.object": ".".join(object_path) if object_path else "root",
                     "bigip.host": bigip_host,
                     "bigip.management_ip": bigip_host,
+                    "bigip.source": bigip_host,
                 }
                 yield metric_name, float(val), attrs
             elif isinstance(val, dict):

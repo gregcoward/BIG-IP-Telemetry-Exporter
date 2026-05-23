@@ -176,13 +176,15 @@ REST equivalent: `POST /api/export/start` with body `{ "session_ids": ["..."], "
    bigip_tm_ltm_virtual_stats
    ```
 
-   With multiple BIG-IPs, filter by device label (from metric attributes):
+   With multiple BIG-IPs, filter by device (labels come from per-point metadata):
 
    ```promql
    bigip_tm_ltm_virtual_stats{bigip_host="172.16.60.123"}
    ```
 
-   (Exact label names depend on the collector Prometheus exporter; search `bigip_` in the UI or use **Graph** autocomplete.)
+   Useful labels: `bigip_host` / `bigip_management_ip` (device), `bigip_endpoint` (iControl path), `bigip_object` (stats object), `bigip_session_id` (API session). In Prometheus **Graph** → **Metrics** explorer, confirm these labels exist on the series.
+
+   If all devices still look like one series, restart export after upgrading (older builds did not attach host labels to OTLP points).
 
 3. **Reload Prometheus (wipe data)** — clears TSDB, then reloads scrape config (`--web.enable-lifecycle` is enabled in `docker-compose.yml`):
    - **Docker Compose:** stop/remove/recreate the `prometheus` container (empty `/prometheus`).
@@ -200,7 +202,7 @@ On Ubuntu, restart uses the same recreate path as reload wipe. On Kubernetes, th
 |-------|----------|
 | Sessions | One session per device; list via `GET /api/bigips` |
 | Metric identity | OTLP instruments keyed per `bigip.host` so values do not overwrite across devices |
-| Attributes | `bigip.host`, `bigip.management_ip`, `bigip.endpoint` on exported points |
+| Attributes (Prometheus labels) | `bigip_host`, `bigip_management_ip`, `bigip_endpoint`, `bigip_object`, `bigip_source`, `bigip_session_id` on each data point |
 | Export scope | Only devices checked in the connections list (unless using API with explicit `session_ids`) |
 | Network | Each device must be reachable from the host/pod running the Python backend |
 
@@ -230,7 +232,7 @@ On Ubuntu, restart uses the same recreate path as reload wipe. On Kubernetes, th
 | `401 Authentication failed` | Check user/password and REST permissions |
 | Token extension warning | Reconnect before long runs, or ignore if export is under ~20 min |
 | No metrics in Prometheus | Export running? Collector up? Correct OTLP URL for your environment |
-| Only one device in metrics | Confirm multiple devices checked; query with `bigip_host` label |
+| Only one device in metrics | Confirm multiple devices checked; query with `bigip_host` label; verify labels in Prometheus **Metrics** explorer (see [Multi-BIG-IP behavior](#multi-bigip-behavior)) |
 | `{"detail":"Not Found"}` on `/` | Build UI: `cd frontend && npm ci && npm run build`, restart API |
 
 ## Installation options
