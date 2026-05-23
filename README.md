@@ -116,10 +116,10 @@ Each connected device appears in a list with:
 - A **warning** if token extension or logging-profile setup failed.
 - **Log profiles** — on connect the exporter creates or updates:
   - **LTM** `/Common/bigip-metrics-requestlog` — Request Logging profile (structured request/response templates)
-  - **ASM** `/Common/bigip-metrics-asm-log` — ASM Logging Profile (`/mgmt/tm/asm/logging-profiles`) with **requestType all**
+  - **ASM** `/Common/bigip-metrics-asm-log` — Security Log Profile (`/mgmt/tm/security/log/profile`) with application logging and request-type **all**
   - **AFM** `/Common/bigip-metrics-afm-log` — Security Log Profile (`/mgmt/tm/security/log/profile`) with ACL match logging and local DB publisher
 
-Attach LTM profile as **Request Logging**; attach the ASM profile as an **ASM Logging Profile**; attach the AFM profile as a **Security Log Profile** (network firewall) on the virtual server. ASM and AFM profiles are created only when the corresponding module is provisioned on the device (level not `none` in `/mgmt/tm/sys/provision`). OTLP log forwarding will be added in a later release.
+Attach LTM profile as **Request Logging**; attach ASM and AFM profiles as **Security Log Profiles** (application and network firewall sections) on the virtual server. ASM and AFM profiles are created only when the corresponding module is provisioned on the device (level not `none` in `/mgmt/tm/sys/provision`). OTLP log forwarding will be added in a later release.
 
 Credentials stay in the API process memory (not written to disk by default). Restarting the backend clears all sessions.
 
