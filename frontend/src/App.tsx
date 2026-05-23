@@ -739,7 +739,7 @@ export default function App() {
                 {d.asm_log_profile && (
                   <span
                     className="muted device-list-profile"
-                    title="ASM Security Log Profile (request-type all)"
+                    title="ASM Security Log Profile"
                   >
                     ASM: <code>{d.asm_log_profile}</code>
                     {d.asm_log_profile_created ? " (new)" : ""}

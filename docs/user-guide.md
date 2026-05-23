@@ -53,7 +53,7 @@ On connect, the exporter creates or updates three logging profiles:
 | Profile | Default name | Attach on virtual server | Notes |
 |---------|--------------|--------------------------|--------|
 | LTM request-log | `/Common/bigip-metrics-requestlog` | **Request Logging** profile | `requestLogTemplate` / `responseLogTemplate` with HTTP fields |
-| ASM security log | `/Common/bigip-metrics-asm-log` | **Security Log Profile** (Application Security) | Created via `/mgmt/tm/security/log/profile` with request-type **all** |
+| ASM security log | `/Common/bigip-metrics-asm-log` | **Security Log Profile** (Application Security) | `POST /mgmt/tm/security/log/profile` with `name` and `partition` only |
 | AFM security log | `/Common/bigip-metrics-afm-log` | **Log Profile** (Network Firewall) | Created via `/mgmt/tm/security/log/profile` with `logRuleMatches` accept/drop/reject and `local-db-publisher` |
 
 ASM and AFM profiles are skipped when that module is not provisioned on the BIG-IP (no connect warning).

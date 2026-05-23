@@ -116,7 +116,7 @@ Each connected device appears in a list with:
 - A **warning** if token extension or logging-profile setup failed.
 - **Log profiles** — on connect the exporter creates or updates:
   - **LTM** `/Common/bigip-metrics-requestlog` — Request Logging profile (structured request/response templates)
-  - **ASM** `/Common/bigip-metrics-asm-log` — Security Log Profile (`/mgmt/tm/security/log/profile`) with application logging and request-type **all**
+  - **ASM** `/Common/bigip-metrics-asm-log` — Security Log Profile (`POST /mgmt/tm/security/log/profile` with `name` and `partition` only)
   - **AFM** `/Common/bigip-metrics-afm-log` — Security Log Profile (`/mgmt/tm/security/log/profile`) with ACL match logging and local DB publisher
 
 Attach LTM profile as **Request Logging**; attach ASM and AFM profiles as **Security Log Profiles** (application and network firewall sections) on the virtual server. ASM and AFM profiles are created only when the corresponding module is provisioned on the device (level not `none` in `/mgmt/tm/sys/provision`). OTLP log forwarding will be added in a later release.
