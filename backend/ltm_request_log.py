@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from backend.bigip_client import BigIPClient, BigIPError
+from backend.bigip_client import BigIPClient
+from backend.bigip_resource import ensure_config_object, is_not_found
+from backend.log_templates import REQUEST_EVENT_TEMPLATE, RESPONSE_EVENT_TEMPLATE
 
 DEFAULT_PROFILE_NAME = "bigip-metrics-requestlog"
 DEFAULT_PARTITION = "Common"
@@ -15,17 +17,8 @@ PROFILE_DESCRIPTION = (
     "profile; request/response logs will be forwarded to the OpenTelemetry collector in a "
     "future release."
 )
-REQUEST_LOG_TEMPLATE = (
-    'event_source="request_logging",hostname="$BIGIP_HOSTNAME",client_ip="$CLIENT_IP",'
-    'server_ip="$SERVER_IP",http_method="$HTTP_METHOD",http_uri="$HTTP_URI",'
-    'virtual_name="$VIRTUAL_NAME",event_timestamp="$DATE_HTTP"'
-)
-RESPONSE_LOG_TEMPLATE = (
-    'event_source="response_logging",hostname="$BIGIP_HOSTNAME",client_ip="$CLIENT_IP",'
-    'server_ip="$SERVER_IP",http_method="$HTTP_METHOD",http_uri="$HTTP_URI",'
-    'virtual_name="$VIRTUAL_NAME",event_timestamp="$DATE_HTTP",'
-    'http_statcode="$HTTP_STATCODE",http_status="$HTTP_STATUS",response_ms="$RESPONSE_MSECS"'
-)
+REQUEST_LOG_TEMPLATE = REQUEST_EVENT_TEMPLATE
+RESPONSE_LOG_TEMPLATE = RESPONSE_EVENT_TEMPLATE
 
 
 @dataclass(frozen=True)
@@ -55,7 +48,10 @@ def profile_name() -> str:
 
 
 def profile_partition() -> str:
-    return os.environ.get("BIGIP_REQUEST_LOG_PARTITION", DEFAULT_PARTITION).strip() or "Common"
+    return (
+        os.environ.get("BIGIP_LOG_PROFILE_PARTITION")
+        or os.environ.get("BIGIP_REQUEST_LOG_PARTITION", DEFAULT_PARTITION)
+    ).strip() or "Common"
 
 
 def profile_instance_path(*, partition: str | None = None, name: str | None = None) -> str:
@@ -88,10 +84,6 @@ def _desired_profile_body(*, partition: str, name: str) -> dict[str, str]:
     }
 
 
-def _is_not_found(exc: BigIPError) -> bool:
-    return "404" in str(exc)
-
-
 def ensure_request_log_profile(
     client: BigIPClient,
     *,
@@ -111,15 +103,11 @@ def ensure_request_log_profile(
     prof = name or profile_name()
     path = profile_instance_path(partition=part, name=prof)
     full = profile_full_name(partition=part, name=prof)
-    desired = _desired_profile_body(partition=part, name=prof)
-
-    try:
-        client.get(path)
-    except BigIPError as exc:
-        if not _is_not_found(exc):
-            raise
-        client.post(PROFILE_COLLECTION, json_body=desired)
-        return RequestLogProfileResult(full_name=full, instance_path=path, created=True)
-
-    client.patch(path, json_body=_profile_settings())
-    return RequestLogProfileResult(full_name=full, instance_path=path, created=False)
+    created = ensure_config_object(
+        client,
+        collection_path=PROFILE_COLLECTION,
+        instance_path=path,
+        create_body=_desired_profile_body(partition=part, name=prof),
+        patch_body=_profile_settings(),
+    )
+    return RequestLogProfileResult(full_name=full, instance_path=path, created=created)

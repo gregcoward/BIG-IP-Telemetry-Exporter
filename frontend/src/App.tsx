@@ -66,6 +66,10 @@ type BigIPDevice = {
   warning?: string | null;
   request_log_profile?: string | null;
   request_log_profile_created?: boolean | null;
+  asm_log_profile?: string | null;
+  asm_log_profile_created?: boolean | null;
+  afm_log_profile?: string | null;
+  afm_log_profile_created?: boolean | null;
   connected_since?: number;
 };
 
@@ -698,9 +702,11 @@ export default function App() {
         <p className="muted">
           Connect one or more management addresses. Metrics are tagged per device (
           <code>bigip.host</code>). Reconnecting the same host replaces the previous session. Each
-          connect creates or updates an LTM request/response logging profile (
-          <code>/Common/bigip-metrics-requestlog</code> by default) that you can attach to virtual
-          servers; log shipping to the OpenTelemetry collector is planned for a later release.
+          connect creates or updates logging profiles on the device: LTM request-log (
+          <code>/Common/bigip-metrics-requestlog</code>), ASM security log (
+          <code>/Common/bigip-metrics-asm-log</code>, request-type <code>all</code>), and AFM
+          security log (<code>/Common/bigip-metrics-afm-log</code>). Attach them on virtual servers;
+          OTLP log shipping is planned for a later release.
         </p>
         <h3 className="subsection-title">Currently connected</h3>
         {devices.length === 0 ? (
@@ -722,9 +728,30 @@ export default function App() {
                   </span>
                 </label>
                 {d.request_log_profile && (
-                  <span className="muted device-list-profile" title="Attach as Request Logging profile on virtual servers">
-                    Log profile: <code>{d.request_log_profile}</code>
+                  <span
+                    className="muted device-list-profile"
+                    title="LTM Request Logging profile"
+                  >
+                    LTM: <code>{d.request_log_profile}</code>
                     {d.request_log_profile_created ? " (new)" : ""}
+                  </span>
+                )}
+                {d.asm_log_profile && (
+                  <span
+                    className="muted device-list-profile"
+                    title="Security Log Profile — ASM (all requests)"
+                  >
+                    ASM: <code>{d.asm_log_profile}</code>
+                    {d.asm_log_profile_created ? " (new)" : ""}
+                  </span>
+                )}
+                {d.afm_log_profile && (
+                  <span
+                    className="muted device-list-profile"
+                    title="Security Log Profile — AFM network firewall"
+                  >
+                    AFM: <code>{d.afm_log_profile}</code>
+                    {d.afm_log_profile_created ? " (new)" : ""}
                   </span>
                 )}
                 {d.warning && <span className="device-list-warn">{d.warning}</span>}

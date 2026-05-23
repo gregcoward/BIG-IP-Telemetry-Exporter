@@ -114,15 +114,24 @@ Each connected device appears in a list with:
 - A **checkbox** — include or exclude from export (at least one must be checked before **Start export**).
 - **Label** and management address.
 - A **warning** if token extension or logging-profile setup failed.
-- **Log profile** — LTM request/response logging profile created or updated on the device (default `/Common/bigip-metrics-requestlog`). Attach it to virtual servers as a **Request Logging** profile; OTLP log forwarding will be added in a later release.
+- **Log profiles** — on connect the exporter creates or updates:
+  - **LTM** `/Common/bigip-metrics-requestlog` — Request Logging profile (structured request/response templates)
+  - **ASM** `/Common/bigip-metrics-asm-log` — Security Log Profile with storage filter **request-type all** and response logging **all**
+  - **AFM** `/Common/bigip-metrics-afm-log` — Security Log Profile with all network firewall log categories enabled
+
+Attach LTM profile as **Request Logging**; attach ASM/AFM profiles as **Log Profile** on the virtual server. OTLP log forwarding will be added in a later release.
 
 Credentials stay in the API process memory (not written to disk by default). Restarting the backend clears all sessions.
 
 | Environment variable | Default | Purpose |
 |---------------------|---------|---------|
-| `BIGIP_REQUEST_LOG_PROFILE_NAME` | `bigip-metrics-requestlog` | Profile name in `Common` |
-| `BIGIP_REQUEST_LOG_PARTITION` | `Common` | Partition for the profile |
-| `BIGIP_REQUEST_LOG_AUTO_CREATE` | `true` | Set `false` to skip profile creation on connect |
+| `BIGIP_REQUEST_LOG_PROFILE_NAME` | `bigip-metrics-requestlog` | LTM request-log profile name |
+| `BIGIP_ASM_LOG_PROFILE_NAME` | `bigip-metrics-asm-log` | ASM security log profile name |
+| `BIGIP_AFM_LOG_PROFILE_NAME` | `bigip-metrics-afm-log` | AFM security log profile name |
+| `BIGIP_LOG_PROFILE_PARTITION` | `Common` | Partition for all exporter-managed profiles |
+| `BIGIP_REQUEST_LOG_AUTO_CREATE` | `true` | Set `false` to skip LTM profile on connect |
+| `BIGIP_ASM_LOG_AUTO_CREATE` | `true` | Set `false` to skip ASM profile on connect |
+| `BIGIP_AFM_LOG_AUTO_CREATE` | `true` | Set `false` to skip AFM profile on connect |
 
 ### 2. Select API endpoints
 

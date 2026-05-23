@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from backend.bigip_client import BigIPClient, BigIPError
 from backend.ltm_request_log import ensure_request_log_profile
+from backend.security_log_profiles import ensure_afm_log_profile, ensure_asm_log_profile
 from backend.collector_config import (
     CONTRIB_EXPORTERS_REPO,
     EXPORTER_TYPES,
@@ -76,6 +77,10 @@ class _Session:
     warning: str | None = None
     request_log_profile: str | None = None
     request_log_profile_created: bool | None = None
+    asm_log_profile: str | None = None
+    asm_log_profile_created: bool | None = None
+    afm_log_profile: str | None = None
+    afm_log_profile_created: bool | None = None
 
 
 _sessions: dict[str, _Session] = {}
@@ -140,6 +145,10 @@ def _session_to_dict(session_id: str, sess: _Session) -> dict[str, Any]:
         "warning": sess.warning,
         "request_log_profile": sess.request_log_profile,
         "request_log_profile_created": sess.request_log_profile_created,
+        "asm_log_profile": sess.asm_log_profile,
+        "asm_log_profile_created": sess.asm_log_profile_created,
+        "afm_log_profile": sess.afm_log_profile,
+        "afm_log_profile_created": sess.afm_log_profile_created,
         "connected_since": sess.created,
     }
 
@@ -192,6 +201,10 @@ class ConnectResponse(BaseModel):
     warning: str | None = None
     request_log_profile: str | None = None
     request_log_profile_created: bool | None = None
+    asm_log_profile: str | None = None
+    asm_log_profile_created: bool | None = None
+    afm_log_profile: str | None = None
+    afm_log_profile_created: bool | None = None
 
 
 class ExporterItem(BaseModel):
@@ -347,8 +360,34 @@ def connect(body: ConnectBody) -> ConnectResponse:
         except BigIPError as exc:
             warning = _append_warning(
                 warning,
-                f"Connected, but could not create or update the request/response "
+                f"Connected, but could not create or update the LTM request/response "
                 f"logging profile ({exc}).",
+            )
+
+        asm_log_profile: str | None = None
+        asm_log_profile_created: bool | None = None
+        try:
+            asm_result = ensure_asm_log_profile(client)
+            asm_log_profile = asm_result.full_name
+            asm_log_profile_created = asm_result.created
+        except BigIPError as exc:
+            warning = _append_warning(
+                warning,
+                f"Connected, but could not create or update the ASM security log "
+                f"profile ({exc}).",
+            )
+
+        afm_log_profile: str | None = None
+        afm_log_profile_created: bool | None = None
+        try:
+            afm_result = ensure_afm_log_profile(client)
+            afm_log_profile = afm_result.full_name
+            afm_log_profile_created = afm_result.created
+        except BigIPError as exc:
+            warning = _append_warning(
+                warning,
+                f"Connected, but could not create or update the AFM security log "
+                f"profile ({exc}).",
             )
 
         host_norm = _normalize_host(body.host)
@@ -363,6 +402,10 @@ def connect(body: ConnectBody) -> ConnectResponse:
             warning=warning,
             request_log_profile=request_log_profile,
             request_log_profile_created=request_log_profile_created,
+            asm_log_profile=asm_log_profile,
+            asm_log_profile_created=asm_log_profile_created,
+            afm_log_profile=afm_log_profile,
+            afm_log_profile_created=afm_log_profile_created,
         )
         return ConnectResponse(
             session_id=sid,
@@ -371,6 +414,10 @@ def connect(body: ConnectBody) -> ConnectResponse:
             warning=warning,
             request_log_profile=request_log_profile,
             request_log_profile_created=request_log_profile_created,
+            asm_log_profile=asm_log_profile,
+            asm_log_profile_created=asm_log_profile_created,
+            afm_log_profile=afm_log_profile,
+            afm_log_profile_created=afm_log_profile_created,
         )
     except HTTPException:
         raise
