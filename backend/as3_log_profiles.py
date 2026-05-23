@@ -132,7 +132,6 @@ def _asm_security_log_profile() -> dict[str, Any]:
         "class": "Security_Log_Profile",
         "application": {
             "localStorage": True,
-            "remoteStorage": "none",
             "storageFilter": {
                 "requestType": "all",
             },
