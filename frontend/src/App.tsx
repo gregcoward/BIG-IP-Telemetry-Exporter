@@ -329,7 +329,7 @@ export default function App() {
       setConnectWarning(data.warning ?? null);
       setHost("");
       setDeviceLabel("");
-      setUsername("");
+      setUsername("admin");
       setPassword("");
       await refreshDevices();
       if (connectExportMetrics) {
