@@ -91,7 +91,7 @@ def _afm_auto_create() -> bool:
 
 
 def _asm_application_body() -> dict:
-    """Application sub-profile (format/filter are structures, not JSON arrays)."""
+    """Application sub-profile; request-type all via storageFilter.requestType (not filter/name)."""
     return {
         "name": "application",
         "localStorage": "enabled",
@@ -99,9 +99,8 @@ def _asm_application_body() -> dict:
         "guaranteeResponseLogging": "enabled",
         "responseLogging": "all",
         "logicOperation": "or",
-        "filter": {
-            "name": "request-type",
-            "values": ["all"],
+        "storageFilter": {
+            "requestType": "all",
         },
         "format": {
             "type": "user-defined",
