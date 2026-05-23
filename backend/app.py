@@ -702,11 +702,26 @@ def _register_ui_routes() -> None:
             name="ui-assets",
         )
 
+    def _favicon_candidates() -> list[Path]:
+        return [
+            FRONTEND_DIST / "favicon.svg",
+            FRONTEND_DIST / "F5-logo-F5-rgb.svg",
+            FAVICON_SVG,
+        ]
+
     def _favicon_response() -> FileResponse:
-        for candidate in (FRONTEND_DIST / "F5-logo-F5-rgb.svg", FAVICON_SVG):
+        for candidate in _favicon_candidates():
             if candidate.is_file():
-                return FileResponse(candidate, media_type="image/svg+xml")
+                return FileResponse(
+                    candidate,
+                    media_type="image/svg+xml",
+                    headers={"Cache-Control": "no-cache"},
+                )
         raise HTTPException(status_code=404, detail="Not Found")
+
+    @app.get("/favicon.ico", include_in_schema=False, response_model=None)
+    def ui_favicon_ico() -> FileResponse:
+        return _favicon_response()
 
     @app.get("/favicon.svg", include_in_schema=False, response_model=None)
     def ui_favicon() -> FileResponse:
@@ -722,7 +737,7 @@ def _register_ui_routes() -> None:
             raise HTTPException(status_code=404, detail="Not Found")
         if ui_path.startswith("assets/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        if ui_path in ("favicon.svg", "F5-logo-F5-rgb.svg"):
+        if ui_path in ("favicon.ico", "favicon.svg", "F5-logo-F5-rgb.svg"):
             return _favicon_response()
         if index_html.is_file():
             return FileResponse(index_html)

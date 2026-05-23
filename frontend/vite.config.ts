@@ -6,24 +6,46 @@ import react from "@vitejs/plugin-react";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRootLogo = path.resolve(__dirname, "..", "F5-logo-F5-rgb.svg");
-const publicLogo = path.resolve(__dirname, "public", "F5-logo-F5-rgb.svg");
+const publicDir = path.resolve(__dirname, "public");
 
-/** Copy repo-root F5-logo-F5-rgb.svg into public/ for dev server and production build. */
-function copyRepoRootFavicon(): Plugin {
+/** Favicon from repo-root F5-logo-F5-rgb.svg: copy to public/ and inline in index.html. */
+function repoRootFaviconPlugin(): Plugin {
+  const copyTargets = ["favicon.svg", "F5-logo-F5-rgb.svg"];
+
+  const faviconLinkTag = (): string => {
+    const svg = fs.readFileSync(repoRootLogo, "utf8");
+    const href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    return `<link rel="icon" type="image/svg+xml" href="${href}" />`;
+  };
+
+  const copyLogoToPublic = () => {
+    if (!fs.existsSync(repoRootLogo)) {
+      throw new Error(`Missing favicon source: ${repoRootLogo}`);
+    }
+    fs.mkdirSync(publicDir, { recursive: true });
+    for (const name of copyTargets) {
+      fs.copyFileSync(repoRootLogo, path.join(publicDir, name));
+    }
+  };
+
   return {
-    name: "copy-repo-root-favicon",
-    buildStart() {
-      if (!fs.existsSync(repoRootLogo)) {
-        throw new Error(`Missing favicon source: ${repoRootLogo}`);
+    name: "repo-root-favicon",
+    buildStart: copyLogoToPublic,
+    configureServer() {
+      copyLogoToPublic();
+    },
+    transformIndexHtml(html) {
+      const tag = faviconLinkTag();
+      if (/<link rel="icon"[^>]*>/i.test(html)) {
+        return html.replace(/<link rel="icon"[^>]*>/i, tag);
       }
-      fs.mkdirSync(path.dirname(publicLogo), { recursive: true });
-      fs.copyFileSync(repoRootLogo, publicLogo);
+      return html.replace("</head>", `    ${tag}\n  </head>`);
     },
   };
 }
 
 export default defineConfig({
-  plugins: [copyRepoRootFavicon(), react()],
+  plugins: [repoRootFaviconPlugin(), react()],
   server: {
     host: true,
     fs: {
