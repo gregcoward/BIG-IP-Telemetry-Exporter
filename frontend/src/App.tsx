@@ -772,49 +772,6 @@ export default function App() {
                     </span>
                   </span>
                 </label>
-                {d.request_log_profile && (
-                  <span
-                    className="muted device-list-profile"
-                    title="LTM Request Logging profile"
-                  >
-                    LTM: <code>{d.request_log_profile}</code>
-                    {d.request_log_profile_created ? " (new)" : ""}
-                  </span>
-                )}
-                {d.asm_log_profile && (
-                  <span
-                    className="muted device-list-profile"
-                    title="ASM Security Log Profile"
-                  >
-                    ASM: <code>{d.asm_log_profile}</code>
-                    {d.asm_log_profile_created ? " (new)" : ""}
-                  </span>
-                )}
-                {d.afm_log_profile && (
-                  <span
-                    className="muted device-list-profile"
-                    title="Security Log Profile — AFM network firewall"
-                  >
-                    AFM: <code>{d.afm_log_profile}</code>
-                    {d.afm_log_profile_created ? " (new)" : ""}
-                  </span>
-                )}
-                {d.http_analytics_profile && (
-                  <span
-                    className="muted device-list-profile"
-                    title="AVR HTTP Analytics profile"
-                  >
-                    AVR HTTP: <code>{d.http_analytics_profile}</code>
-                  </span>
-                )}
-                {d.tcp_analytics_profile && (
-                  <span
-                    className="muted device-list-profile"
-                    title="AVR TCP Analytics profile"
-                  >
-                    AVR TCP: <code>{d.tcp_analytics_profile}</code>
-                  </span>
-                )}
                 {d.warning && <span className="device-list-warn">{d.warning}</span>}
                 <button
                   type="button"
