@@ -39,6 +39,7 @@ from backend.prometheus_ops import control_status, reload_prometheus, restart_pr
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APIS_CSV = REPO_ROOT / "data" / "bigip_apis.csv"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+FAVICON_SVG = REPO_ROOT / "F5-logo-F5-rgb.svg"
 DEFAULT_OTLP_ENDPOINT = os.environ.get(
     "OTLP_HTTP_ENDPOINT",
     "http://127.0.0.1:4318",
@@ -701,12 +702,28 @@ def _register_ui_routes() -> None:
             name="ui-assets",
         )
 
+    def _favicon_response() -> FileResponse:
+        for candidate in (FRONTEND_DIST / "F5-logo-F5-rgb.svg", FAVICON_SVG):
+            if candidate.is_file():
+                return FileResponse(candidate, media_type="image/svg+xml")
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    @app.get("/favicon.svg", include_in_schema=False, response_model=None)
+    def ui_favicon() -> FileResponse:
+        return _favicon_response()
+
+    @app.get("/F5-logo-F5-rgb.svg", include_in_schema=False, response_model=None)
+    def ui_f5_logo() -> FileResponse:
+        return _favicon_response()
+
     @app.get("/{ui_path:path}", include_in_schema=False, response_model=None)
     def ui_fallback(ui_path: str) -> FileResponse | HTMLResponse:
         if ui_path.startswith("api/") or ui_path == "api":
             raise HTTPException(status_code=404, detail="Not Found")
         if ui_path.startswith("assets/"):
             raise HTTPException(status_code=404, detail="Not Found")
+        if ui_path in ("favicon.svg", "F5-logo-F5-rgb.svg"):
+            return _favicon_response()
         if index_html.is_file():
             return FileResponse(index_html)
         return HTMLResponse(_ui_setup_hint(), status_code=200)

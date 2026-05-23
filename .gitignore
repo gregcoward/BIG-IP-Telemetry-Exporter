@@ -5,6 +5,7 @@ venv/
 .env
 node_modules/
 frontend/dist/
+frontend/public/F5-logo-F5-rgb.svg
 .DS_Store
 *.egg-info/
 .pytest_cache/
