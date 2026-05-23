@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from backend.bigip_client import BigIPClient
+from backend.bigip_client import BigIPClient, BigIPError
 from backend.bigip_resource import ensure_config_object, is_not_found
 from backend.module_provision import is_module_provisioned
 from backend.log_templates import AFM_NETWORK_EVENT_TEMPLATE, REQUEST_EVENT_TEMPLATE
