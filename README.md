@@ -114,12 +114,14 @@ Each connected device appears in a list with:
 - A **checkbox** — include or exclude from export (at least one must be checked before **Start export**).
 - **Label** and management address.
 - A **warning** if token extension or logging-profile setup failed.
-- **Log profiles** — on connect the exporter creates or updates:
-  - **LTM** `/Common/bigip-metrics-requestlog` — Request Logging profile (structured request/response templates)
-  - **ASM** `/Common/bigip-metrics-asm-log` — Security Log Profile (`POST /mgmt/tm/security/log/profile` with `name` and `partition` only)
-  - **AFM** `/Common/bigip-metrics-afm-log` — Security Log Profile (`/mgmt/tm/security/log/profile`) with ACL match logging and local DB publisher
+- **Log and analytics profiles** — on connect the exporter checks for **F5 AS3** (installs from `BIGIP_AS3_RPM_PATH` when missing), verifies module provisioning, then **POST**s an AS3 declaration to `/mgmt/shared/appsvcs/declare` with local logging/analytics objects:
+  - **LTM** `/Common/bigip-metrics-requestlog` — `Traffic_Log_Profile` (request/response templates)
+  - **ASM** `/Common/bigip-metrics-asm-log` — `Security_Log_Profile` (application, local storage, `requestType` all)
+  - **AFM** `/Common/bigip-metrics-afm-log` — `Security_Log_Profile` (network, `local-db-publisher`)
+  - **AVR HTTP** `/Common/bigip-metrics-http-analytics` — `Analytics_Profile`
+  - **AVR TCP** `/Common/bigip-metrics-tcp-analytics` — `Analytics_TCP_Profile`
 
-Attach LTM profile as **Request Logging**; attach ASM and AFM profiles as **Security Log Profiles** (application and network firewall sections) on the virtual server. ASM and AFM profiles are created only when the corresponding module is provisioned on the device (level not `none` in `/mgmt/tm/sys/provision`). OTLP log forwarding will be added in a later release.
+Attach LTM as **Request Logging**; ASM/AFM as **Security Log Profiles**; analytics profiles on virtual servers when using AVR. Profiles for unprovisioned modules are omitted (no warning). OTLP log forwarding will be added in a later release.
 
 Credentials stay in the API process memory (not written to disk by default). Restarting the backend clears all sessions.
 
@@ -133,7 +135,13 @@ Credentials stay in the API process memory (not written to disk by default). Res
 | `BIGIP_ASM_LOG_AUTO_CREATE` | `true` | Set `false` to skip ASM profile on connect |
 | `BIGIP_AFM_LOG_AUTO_CREATE` | `true` | Set `false` to skip AFM profile on connect |
 | `BIGIP_AFM_LOG_PUBLISHER` | `/Common/local-db-publisher` | Log publisher for AFM network events |
-| `BIGIP_AFM_AGGREGATE_RATE_LIMIT` | `1000` | AFM network `aggregateRateLimit` |
+| `BIGIP_HTTP_ANALYTICS_PROFILE_NAME` | `bigip-metrics-http-analytics` | AVR HTTP analytics profile name |
+| `BIGIP_TCP_ANALYTICS_PROFILE_NAME` | `bigip-metrics-tcp-analytics` | AVR TCP analytics profile name |
+| `BIGIP_HTTP_ANALYTICS_AUTO_CREATE` | `true` | Set `false` to skip HTTP analytics profile |
+| `BIGIP_TCP_ANALYTICS_AUTO_CREATE` | `true` | Set `false` to skip TCP analytics profile |
+| `BIGIP_AS3_RPM_PATH` | _(unset)_ | Local path to `f5-appsvcs-*.noarch.rpm` for auto-install when AS3 is missing |
+| `BIGIP_AS3_AUTO_INSTALL` | `true` | Set `false` to require AS3 pre-installed |
+| `BIGIP_AS3_SCHEMA_VERSION` | `3.49.0` | AS3 declaration `schemaVersion` when `/info` is unavailable |
 
 ### 2. Select API endpoints
 

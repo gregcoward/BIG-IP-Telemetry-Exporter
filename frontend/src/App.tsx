@@ -70,6 +70,10 @@ type BigIPDevice = {
   asm_log_profile_created?: boolean | null;
   afm_log_profile?: string | null;
   afm_log_profile_created?: boolean | null;
+  http_analytics_profile?: string | null;
+  http_analytics_profile_created?: boolean | null;
+  tcp_analytics_profile?: string | null;
+  tcp_analytics_profile_created?: boolean | null;
   connected_since?: number;
 };
 
@@ -702,10 +706,8 @@ export default function App() {
         <p className="muted">
           Connect one or more management addresses. Metrics are tagged per device (
           <code>bigip.host</code>). Reconnecting the same host replaces the previous session. Each
-          connect creates or updates logging profiles on the device: LTM request-log (
-          <code>/Common/bigip-metrics-requestlog</code>), ASM           ASM logging profile (
-          <code>/Common/bigip-metrics-asm-log</code>, requestType <code>all</code>), and AFM security log
-          security log (<code>/Common/bigip-metrics-afm-log</code>). Attach them on virtual servers;
+          connect deploys an AS3 declaration with local logging and AVR analytics profiles (LTM
+          request-log, ASM/AFM security log, HTTP/TCP analytics). Attach them on virtual servers;
           OTLP log shipping is planned for a later release.
         </p>
         <h3 className="subsection-title">Currently connected</h3>
@@ -752,6 +754,22 @@ export default function App() {
                   >
                     AFM: <code>{d.afm_log_profile}</code>
                     {d.afm_log_profile_created ? " (new)" : ""}
+                  </span>
+                )}
+                {d.http_analytics_profile && (
+                  <span
+                    className="muted device-list-profile"
+                    title="AVR HTTP Analytics profile"
+                  >
+                    AVR HTTP: <code>{d.http_analytics_profile}</code>
+                  </span>
+                )}
+                {d.tcp_analytics_profile && (
+                  <span
+                    className="muted device-list-profile"
+                    title="AVR TCP Analytics profile"
+                  >
+                    AVR TCP: <code>{d.tcp_analytics_profile}</code>
                   </span>
                 )}
                 {d.warning && <span className="device-list-warn">{d.warning}</span>}

@@ -7,6 +7,7 @@ This document is the detailed companion to the [User guide section in README](..
 - UI reachable at `http://<HOST-IP>:8001`
 - OpenTelemetry Collector and Prometheus running (Docker Compose on Ubuntu, or cluster workloads on Kubernetes)
 - Network path from the **Python backend** to each BIG-IP management IP (HTTPS, typically port 443)
+- For logging/analytics profile setup: **F5 AS3** on the BIG-IP, or `BIGIP_AS3_RPM_PATH` pointing at a local `f5-appsvcs-*.noarch.rpm` for automatic install on connect
 
 After upgrading the repo, rebuild the UI when not using Vite dev mode: `cd frontend && npm ci && npm run build`, then restart the API.
 
@@ -45,18 +46,20 @@ When devices are connected, the **Connected status bar** at the top lists each o
 |---------|--------|
 | Checkbox | Include device in export |
 | **Remove** | Disconnect (`DELETE /api/session/{session_id}`) |
-| Warning text | Token extension or logging-profile setup failed |
-| Log profile | Request/response logging profile on BIG-IP (default `/Common/bigip-metrics-requestlog`) |
+| Warning text | Token extension or AS3/logging-profile setup failed |
+| Profile lines | LTM/ASM/AFM logging and AVR analytics profiles deployed via AS3 |
 
-On connect, the exporter creates or updates three logging profiles:
+On connect, the exporter verifies AS3 (`GET /mgmt/shared/appsvcs/info`), installs the AS3 RPM when needed (`BIGIP_AS3_RPM_PATH`), checks module provisioning, then **POST**s an AS3 declaration to `/mgmt/shared/appsvcs/declare` (local logging/analytics only):
 
-| Profile | Default name | Attach on virtual server | Notes |
-|---------|--------------|--------------------------|--------|
-| LTM request-log | `/Common/bigip-metrics-requestlog` | **Request Logging** profile | `requestLogTemplate` / `responseLogTemplate` with HTTP fields |
-| ASM security log | `/Common/bigip-metrics-asm-log` | **Security Log Profile** (Application Security) | `POST /mgmt/tm/security/log/profile` with `name` and `partition` only |
-| AFM security log | `/Common/bigip-metrics-afm-log` | **Log Profile** (Network Firewall) | Created via `/mgmt/tm/security/log/profile` with `logRuleMatches` accept/drop/reject and `local-db-publisher` |
+| Profile | Default name | Attach on virtual server | AS3 class |
+|---------|--------------|--------------------------|-----------|
+| LTM request-log | `/Common/bigip-metrics-requestlog` | **Request Logging** | `Traffic_Log_Profile` |
+| ASM security log | `/Common/bigip-metrics-asm-log` | **Security Log Profile** (Application Security) | `Security_Log_Profile` (local, `requestType` all) |
+| AFM security log | `/Common/bigip-metrics-afm-log` | **Security Log Profile** (Network Firewall) | `Security_Log_Profile` (`local-db-publisher`) |
+| AVR HTTP analytics | `/Common/bigip-metrics-http-analytics` | HTTP **Analytics** profile | `Analytics_Profile` |
+| AVR TCP analytics | `/Common/bigip-metrics-tcp-analytics` | TCP **Analytics** profile | `Analytics_TCP_Profile` |
 
-ASM and AFM profiles are skipped when that module is not provisioned on the BIG-IP (no connect warning).
+Profiles for unprovisioned modules (ASM, AFM, AVR) are omitted with no connect warning.
 
 Shipping logs to the OpenTelemetry collector is planned for a later release.
 

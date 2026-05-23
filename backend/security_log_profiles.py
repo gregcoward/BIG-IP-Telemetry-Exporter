@@ -1,4 +1,4 @@
-"""ASM and AFM security log profiles via /mgmt/tm/security/log/profile."""
+"""Legacy REST helpers (superseded by backend.as3_log_profiles on connect)."""
 
 from __future__ import annotations
 

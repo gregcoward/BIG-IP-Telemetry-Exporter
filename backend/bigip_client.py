@@ -197,6 +197,42 @@ class BigIPClient:
     def put(self, endpoint: str, *, json_body: dict[str, Any] | None = None) -> Any:
         return self._request("PUT", endpoint, json_body=json_body)
 
+    def upload_bytes(
+        self,
+        endpoint: str,
+        data: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> Any:
+        """Upload binary content (e.g. RPM) to a file-transfer uploads URI."""
+        if not self._token:
+            self.login()
+        url = self._url(endpoint)
+
+        def send() -> requests.Response:
+            try:
+                return self._session.post(
+                    url,
+                    data=data,
+                    verify=self.verify_tls,
+                    timeout=max(self.timeout, 120),
+                    headers={"Content-Type": content_type},
+                )
+            except requests.RequestException as exc:
+                raise BigIPError(f"POST {endpoint} failed: {exc}") from exc
+
+        r = send()
+        if r.status_code == 401:
+            self.login()
+            r = send()
+        if r.status_code >= 400:
+            raise BigIPError(
+                f"POST {endpoint} failed ({r.status_code}): {r.text[:400]}",
+            )
+        if not r.text.strip():
+            return {}
+        return self._parse_json_response(endpoint, r)
+
     def logout(self) -> None:
         if not self._token:
             return

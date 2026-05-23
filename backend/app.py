@@ -22,8 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 logger = logging.getLogger(__name__)
 
 from backend.bigip_client import BigIPClient, BigIPError
-from backend.ltm_request_log import ensure_request_log_profile
-from backend.security_log_profiles import ensure_afm_log_profile, ensure_asm_log_profile
+from backend.as3_log_profiles import ensure_log_profiles_via_as3
 from backend.collector_config import (
     CONTRIB_EXPORTERS_REPO,
     EXPORTER_TYPES,
@@ -81,6 +80,10 @@ class _Session:
     asm_log_profile_created: bool | None = None
     afm_log_profile: str | None = None
     afm_log_profile_created: bool | None = None
+    http_analytics_profile: str | None = None
+    http_analytics_profile_created: bool | None = None
+    tcp_analytics_profile: str | None = None
+    tcp_analytics_profile_created: bool | None = None
 
 
 _sessions: dict[str, _Session] = {}
@@ -149,6 +152,10 @@ def _session_to_dict(session_id: str, sess: _Session) -> dict[str, Any]:
         "asm_log_profile_created": sess.asm_log_profile_created,
         "afm_log_profile": sess.afm_log_profile,
         "afm_log_profile_created": sess.afm_log_profile_created,
+        "http_analytics_profile": sess.http_analytics_profile,
+        "http_analytics_profile_created": sess.http_analytics_profile_created,
+        "tcp_analytics_profile": sess.tcp_analytics_profile,
+        "tcp_analytics_profile_created": sess.tcp_analytics_profile_created,
         "connected_since": sess.created,
     }
 
@@ -205,6 +212,10 @@ class ConnectResponse(BaseModel):
     asm_log_profile_created: bool | None = None
     afm_log_profile: str | None = None
     afm_log_profile_created: bool | None = None
+    http_analytics_profile: str | None = None
+    http_analytics_profile_created: bool | None = None
+    tcp_analytics_profile: str | None = None
+    tcp_analytics_profile_created: bool | None = None
 
 
 class ExporterItem(BaseModel):
@@ -353,43 +364,31 @@ def connect(body: ConnectBody) -> ConnectResponse:
 
         request_log_profile: str | None = None
         request_log_profile_created: bool | None = None
-        try:
-            profile_result = ensure_request_log_profile(client)
-            request_log_profile = profile_result.full_name
-            request_log_profile_created = profile_result.created
-        except BigIPError as exc:
-            warning = _append_warning(
-                warning,
-                f"Connected, but could not create or update the LTM request/response "
-                f"logging profile ({exc}).",
-            )
-
         asm_log_profile: str | None = None
         asm_log_profile_created: bool | None = None
-        try:
-            asm_result = ensure_asm_log_profile(client)
-            if asm_result is not None:
-                asm_log_profile = asm_result.full_name
-                asm_log_profile_created = asm_result.created
-        except BigIPError as exc:
-            warning = _append_warning(
-                warning,
-                f"Connected, but could not create or update the ASM security log "
-                f"profile ({exc}).",
-            )
-
         afm_log_profile: str | None = None
         afm_log_profile_created: bool | None = None
+        http_analytics_profile: str | None = None
+        http_analytics_profile_created: bool | None = None
+        tcp_analytics_profile: str | None = None
+        tcp_analytics_profile_created: bool | None = None
         try:
-            afm_result = ensure_afm_log_profile(client)
-            if afm_result is not None:
-                afm_log_profile = afm_result.full_name
-                afm_log_profile_created = afm_result.created
+            profiles = ensure_log_profiles_via_as3(client)
+            request_log_profile = profiles.request_log_profile
+            request_log_profile_created = profiles.request_log_profile_created
+            asm_log_profile = profiles.asm_log_profile
+            asm_log_profile_created = profiles.asm_log_profile_created
+            afm_log_profile = profiles.afm_log_profile
+            afm_log_profile_created = profiles.afm_log_profile_created
+            http_analytics_profile = profiles.http_analytics_profile
+            http_analytics_profile_created = profiles.http_analytics_profile_created
+            tcp_analytics_profile = profiles.tcp_analytics_profile
+            tcp_analytics_profile_created = profiles.tcp_analytics_profile_created
         except BigIPError as exc:
             warning = _append_warning(
                 warning,
-                f"Connected, but could not create or update the AFM security log "
-                f"profile ({exc}).",
+                f"Connected, but could not create or update logging/analytics profiles "
+                f"via AS3 ({exc}).",
             )
 
         host_norm = _normalize_host(body.host)
@@ -408,6 +407,10 @@ def connect(body: ConnectBody) -> ConnectResponse:
             asm_log_profile_created=asm_log_profile_created,
             afm_log_profile=afm_log_profile,
             afm_log_profile_created=afm_log_profile_created,
+            http_analytics_profile=http_analytics_profile,
+            http_analytics_profile_created=http_analytics_profile_created,
+            tcp_analytics_profile=tcp_analytics_profile,
+            tcp_analytics_profile_created=tcp_analytics_profile_created,
         )
         return ConnectResponse(
             session_id=sid,
@@ -420,6 +423,10 @@ def connect(body: ConnectBody) -> ConnectResponse:
             asm_log_profile_created=asm_log_profile_created,
             afm_log_profile=afm_log_profile,
             afm_log_profile_created=afm_log_profile_created,
+            http_analytics_profile=http_analytics_profile,
+            http_analytics_profile_created=http_analytics_profile_created,
+            tcp_analytics_profile=tcp_analytics_profile,
+            tcp_analytics_profile_created=tcp_analytics_profile_created,
         )
     except HTTPException:
         raise
