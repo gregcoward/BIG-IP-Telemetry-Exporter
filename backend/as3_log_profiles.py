@@ -35,6 +35,20 @@ DEFAULT_AFM_LOG_NAME = "bigip-metrics-afm-log"
 DEFAULT_HTTP_ANALYTICS_NAME = "bigip-metrics-http-analytics"
 DEFAULT_TCP_ANALYTICS_NAME = "bigip-metrics-tcp-analytics"
 
+# Required for ASM remoteStorage "remote" (predefined format cannot have empty fields).
+_ASM_REMOTE_LOG_FIELDS = [
+    "date_time",
+    "ip_client",
+    "method",
+    "uri",
+    "response_code",
+    "request_status",
+    "support_id",
+    "violations",
+    "http_class_name",
+    "unit_hostname",
+]
+
 
 @dataclass(frozen=True)
 class LogProfilesResult:
@@ -204,6 +218,10 @@ def _asm_security_log_profile(host: str) -> dict[str, Any]:
                 "requestType": "all",
             },
             "responseLogging": "all",
+            "storageFormat": {
+                "delimiter": ",",
+                "fields": _ASM_REMOTE_LOG_FIELDS,
+            },
         },
     }
 
