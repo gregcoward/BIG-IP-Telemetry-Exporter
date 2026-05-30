@@ -96,9 +96,14 @@ _sessions: dict[str, _Session] = {}
 _export_loop: MetricsExportLoop | None = None
 _pusher: OTLPMetricsPusher | None = None
 _log_export: dict[str, Any] = {"active": False, "hosts": [], "syslog_target": None, "hsl_target": None}
-_collector_exporters: list[dict[str, Any]] = [
+_collector_metric_exporters: list[dict[str, Any]] = [
     {"type": "prometheus", "enabled": True, "params": {"endpoint": "0.0.0.0:8889"}},
 ]
+_collector_log_exporters: list[dict[str, Any]] = [
+    {"type": "debug", "enabled": True, "params": {"verbosity": "basic"}},
+]
+_collector_export_metrics: bool = True
+_collector_export_logs: bool = True
 
 
 def _gc_sessions() -> None:
@@ -242,7 +247,14 @@ class ExporterItem(BaseModel):
 
 
 class CollectorConfigBody(BaseModel):
-    exporters: list[ExporterItem]
+    metric_exporters: list[ExporterItem] = Field(default_factory=list)
+    log_exporters: list[ExporterItem] = Field(default_factory=list)
+    exporters: list[ExporterItem] | None = Field(
+        default=None,
+        description="Deprecated: treated as metric_exporters when metric/log lists are empty",
+    )
+    export_metrics: bool = True
+    export_logs: bool = True
     restart_hint: bool = Field(
         default=True,
         description="When true, response includes docker compose restart command",
@@ -525,9 +537,18 @@ def exporters_catalog() -> dict[str, Any]:
 
 @app.get("/api/collector/config")
 def get_collector_config() -> dict[str, Any]:
-    cfg = build_collector_config(_collector_exporters)
+    cfg = build_collector_config(
+        _collector_metric_exporters,
+        _collector_log_exporters,
+        export_metrics=_collector_export_metrics,
+        export_logs=_collector_export_logs,
+    )
     return {
-        "exporters": _collector_exporters,
+        "metric_exporters": _collector_metric_exporters,
+        "log_exporters": _collector_log_exporters,
+        "exporters": _collector_metric_exporters,
+        "export_metrics": _collector_export_metrics,
+        "export_logs": _collector_export_logs,
         "yaml": _yaml_dump(cfg),
         "generated_path": str(GENERATED_CONFIG_PATH),
     }
@@ -535,11 +556,31 @@ def get_collector_config() -> dict[str, Any]:
 
 @app.post("/api/collector/config")
 def apply_collector_config(body: CollectorConfigBody) -> dict[str, Any]:
-    global _collector_exporters
-    _collector_exporters = [e.model_dump() for e in body.exporters]
+    global _collector_metric_exporters, _collector_log_exporters
+    global _collector_export_metrics, _collector_export_logs
+
+    metric_items = body.metric_exporters
+    log_items = body.log_exporters
+    if body.exporters and not metric_items and not log_items:
+        metric_items = body.exporters
+
+    _collector_metric_exporters = [e.model_dump() for e in metric_items]
+    _collector_log_exporters = [e.model_dump() for e in log_items]
+    _collector_export_metrics = body.export_metrics
+    _collector_export_logs = body.export_logs
     try:
-        path = write_collector_config(_collector_exporters)
-        cfg = build_collector_config(_collector_exporters)
+        path = write_collector_config(
+            _collector_metric_exporters,
+            _collector_log_exporters,
+            export_metrics=_collector_export_metrics,
+            export_logs=_collector_export_logs,
+        )
+        cfg = build_collector_config(
+            _collector_metric_exporters,
+            _collector_log_exporters,
+            export_metrics=_collector_export_metrics,
+            export_logs=_collector_export_logs,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     restart = os.environ.get(
@@ -550,6 +591,10 @@ def apply_collector_config(body: CollectorConfigBody) -> dict[str, Any]:
         "ok": True,
         "path": str(path),
         "yaml": _yaml_dump(cfg),
+        "metric_exporters": _collector_metric_exporters,
+        "log_exporters": _collector_log_exporters,
+        "export_metrics": _collector_export_metrics,
+        "export_logs": _collector_export_logs,
         "restart_command": restart,
         "k8s_apply_hint": (
             "kubectl -n bigip-metrics create configmap otel-collector-config "

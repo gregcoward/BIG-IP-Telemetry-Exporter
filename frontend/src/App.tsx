@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import f5LogoUrl from "../../F5-logo-F5-rgb.svg";
 
 const THEME_STORAGE_KEY = "bigip-metrics-ui-theme";
@@ -31,6 +31,7 @@ type ExporterCatalogItem = {
   category?: string;
   component?: string;
   doc_url?: string;
+  signals?: string[];
   fields?: ExporterFieldSpec[];
 };
 
@@ -46,6 +47,8 @@ type ExporterConfig = {
   params: Record<string, string | number | boolean>;
 };
 
+type ExporterSignal = "metrics" | "logs";
+
 function defaultParamsForSpec(spec: ExporterCatalogItem | undefined): Record<string, string | number | boolean> {
   if (!spec?.fields?.length) return {};
   const out: Record<string, string | number | boolean> = {};
@@ -55,6 +58,21 @@ function defaultParamsForSpec(spec: ExporterCatalogItem | undefined): Record<str
     }
   }
   return out;
+}
+
+function defaultParamsForSignal(
+  spec: ExporterCatalogItem | undefined,
+  signal: ExporterSignal,
+): Record<string, string | number | boolean> {
+  const params = defaultParamsForSpec(spec);
+  if (signal === "logs" && spec?.type === "file" && !params.path) {
+    return { ...params, path: "/tmp/bigip-logs.json" };
+  }
+  return params;
+}
+
+function catalogForSignal(catalog: ExporterCatalogItem[], signal: ExporterSignal): ExporterCatalogItem[] {
+  return catalog.filter((c) => (c.signals ?? ["metrics"]).includes(signal));
 }
 
 type BigIPDevice = {
@@ -123,8 +141,12 @@ async function readJson<T>(r: Response): Promise<T> {
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
-const DEFAULT_EXPORTERS: ExporterConfig[] = [
+const DEFAULT_METRIC_EXPORTERS: ExporterConfig[] = [
   { type: "prometheus", enabled: true, params: { endpoint: "0.0.0.0:8889" } },
+];
+
+const DEFAULT_LOG_EXPORTERS: ExporterConfig[] = [
+  { type: "debug", enabled: true, params: { verbosity: "basic" } },
 ];
 
 function resolveTheme(mode: ThemeMode): "light" | "dark" {
@@ -167,7 +189,8 @@ export default function App() {
   const [contribRepoUrl, setContribRepoUrl] = useState(
     "https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter",
   );
-  const [exporters, setExporters] = useState<ExporterConfig[]>(DEFAULT_EXPORTERS);
+  const [metricExporters, setMetricExporters] = useState<ExporterConfig[]>(DEFAULT_METRIC_EXPORTERS);
+  const [logExporters, setLogExporters] = useState<ExporterConfig[]>(DEFAULT_LOG_EXPORTERS);
   const [collectorYaml, setCollectorYaml] = useState("");
 
   const [pollInterval, setPollInterval] = useState(30);
@@ -261,6 +284,15 @@ export default function App() {
   const exportSelectedDevices = useMemo(() => {
     return devices.filter((d) => exportDeviceIds.has(d.session_id));
   }, [devices, exportDeviceIds]);
+
+  const collectorExportModes = useMemo(() => {
+    const src = exportSelectedDevices.length > 0 ? exportSelectedDevices : devices;
+    if (src.length === 0) return { metrics: true, logs: true };
+    return {
+      metrics: src.some((d) => d.export_metrics !== false),
+      logs: src.some((d) => d.export_logs !== false),
+    };
+  }, [exportSelectedDevices, devices]);
 
   const moduleFilterOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -393,7 +425,12 @@ export default function App() {
       const r = await apiFetch("/api/collector/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exporters }),
+        body: JSON.stringify({
+          metric_exporters: metricExporters,
+          log_exporters: logExporters,
+          export_metrics: collectorExportModes.metrics,
+          export_logs: collectorExportModes.logs,
+        }),
       });
       const data = await readJson<{ yaml: string; restart_command: string }>(r);
       setCollectorYaml(data.yaml);
@@ -402,13 +439,20 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [exporters]);
+  }, [metricExporters, logExporters, collectorExportModes]);
 
   const loadCollectorYaml = useCallback(async () => {
     const r = await apiFetch("/api/collector/config");
-    const data = await readJson<{ yaml: string; exporters: ExporterConfig[] }>(r);
+    const data = await readJson<{
+      yaml: string;
+      metric_exporters?: ExporterConfig[];
+      log_exporters?: ExporterConfig[];
+      exporters?: ExporterConfig[];
+    }>(r);
     setCollectorYaml(data.yaml);
-    if (data.exporters?.length) setExporters(data.exporters);
+    if (data.metric_exporters?.length) setMetricExporters(data.metric_exporters);
+    else if (data.exporters?.length) setMetricExporters(data.exporters);
+    if (data.log_exporters?.length) setLogExporters(data.log_exporters);
   }, []);
 
   const startExport = useCallback(async () => {
@@ -546,37 +590,70 @@ export default function App() {
     return m;
   }, [catalog]);
 
-  const addExporter = () => {
-    const first = catalog.find((c) => c.type === "otlp_http") ?? catalog[0];
+  const addExporter = (
+    signal: ExporterSignal,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
+    const filtered = catalogForSignal(catalog, signal);
+    const preferred =
+      signal === "metrics"
+        ? filtered.find((c) => c.type === "otlp_http")
+        : filtered.find((c) => c.type === "debug");
+    const first = preferred ?? filtered[0];
     if (!first) return;
-    setExporters((prev) => [
+    setList((prev) => [
       ...prev,
-      { type: first.type, enabled: true, params: defaultParamsForSpec(first) },
+      {
+        type: first.type,
+        enabled: true,
+        params: defaultParamsForSignal(first, signal),
+      },
     ]);
   };
 
-  const updateExporter = (idx: number, patch: Partial<ExporterConfig>) => {
-    setExporters((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  const updateExporter = (
+    idx: number,
+    patch: Partial<ExporterConfig>,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
+    setList((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
   };
 
-  const setExporterType = (idx: number, newType: string) => {
+  const setExporterType = (
+    idx: number,
+    newType: string,
+    signal: ExporterSignal,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
     const spec = catalogByType.get(newType);
-    updateExporter(idx, { type: newType, params: defaultParamsForSpec(spec) });
+    updateExporter(idx, { type: newType, params: defaultParamsForSignal(spec, signal) }, setList);
   };
 
   const setExporterParam = (
     idx: number,
     name: string,
     value: string | number | boolean,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
   ) => {
-    setExporters((prev) =>
+    setList((prev) =>
       prev.map((e, i) =>
         i === idx ? { ...e, params: { ...e.params, [name]: value } } : e,
       ),
     );
   };
 
-  const renderExporterFields = (exp: ExporterConfig, idx: number) => {
+  const removeExporter = (
+    idx: number,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
+    setList((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const renderExporterFields = (
+    exp: ExporterConfig,
+    idx: number,
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
     const spec = catalogByType.get(exp.type);
     if (!spec?.fields?.length) return null;
 
@@ -591,7 +668,7 @@ export default function App() {
               id={id}
               type="checkbox"
               checked={Boolean(value)}
-              onChange={(e) => setExporterParam(idx, field.name, e.target.checked)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.checked, setList)}
             />
             {field.label}
           </label>
@@ -605,7 +682,7 @@ export default function App() {
             <select
               id={id}
               value={String(value)}
-              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value, setList)}
             >
               {field.options.map((opt) => (
                 <option key={opt} value={opt}>
@@ -626,7 +703,7 @@ export default function App() {
               rows={5}
               value={String(value)}
               placeholder={field.placeholder}
-              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value, setList)}
             />
           </div>
         );
@@ -641,7 +718,7 @@ export default function App() {
               list={`contrib-components-${idx}`}
               value={String(value)}
               placeholder={field.placeholder}
-              onChange={(e) => setExporterParam(idx, field.name, e.target.value)}
+              onChange={(e) => setExporterParam(idx, field.name, e.target.value, setList)}
             />
             <datalist id={`contrib-components-${idx}`}>
               {contribComponents.map((c) => (
@@ -667,6 +744,7 @@ export default function App() {
                 idx,
                 field.name,
                 field.field_type === "number" ? Number(e.target.value) : e.target.value,
+                setList,
               )
             }
           />
@@ -675,8 +753,91 @@ export default function App() {
     });
   };
 
-  const removeExporter = (idx: number) => {
-    setExporters((prev) => prev.filter((_, i) => i !== idx));
+  const renderExporterSection = (
+    signal: ExporterSignal,
+    title: string,
+    hint: string,
+    exporters: ExporterConfig[],
+    setList: Dispatch<SetStateAction<ExporterConfig[]>>,
+  ) => {
+    const filteredCatalog = catalogForSignal(catalog, signal);
+    const categories =
+      catalogCategories.length > 0
+        ? catalogCategories
+        : [...new Set(filteredCatalog.map((c) => c.category ?? "Other"))];
+
+    return (
+      <div className="exporter-pipeline-section">
+        <h3>{title}</h3>
+        <p className="muted">{hint}</p>
+        {exporters.map((exp, idx) => {
+          const spec = catalogByType.get(exp.type);
+          return (
+            <div key={`${signal}-${idx}`} className="exporter-row">
+              <div className="row">
+                <div className="field">
+                  <label>Exporter type</label>
+                  <select
+                    value={exp.type}
+                    onChange={(e) => setExporterType(idx, e.target.value, signal, setList)}
+                  >
+                    {categories.map((cat) => (
+                      <optgroup key={cat} label={cat}>
+                        {filteredCatalog
+                          .filter((c) => (c.category ?? "Other") === cat)
+                          .map((c) => (
+                            <option key={c.type} value={c.type}>
+                              {c.label}
+                            </option>
+                          ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={exp.enabled}
+                    onChange={(e) => updateExporter(idx, { enabled: e.target.checked }, setList)}
+                  />
+                  Enabled
+                </label>
+              </div>
+              {spec?.description && (
+                <p className="muted exporter-desc">
+                  {spec.description}
+                  {spec.doc_url && (
+                    <>
+                      {" "}
+                      <a href={spec.doc_url} target="_blank" rel="noreferrer">
+                        Docs
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
+              <div className="exporter-fields">{renderExporterFields(exp, idx, setList)}</div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => removeExporter(idx, setList)}
+              >
+                Remove
+              </button>
+            </div>
+          );
+        })}
+        <div className="actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => addExporter(signal, setList)}
+          >
+            Add {signal} exporter
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -967,74 +1128,44 @@ export default function App() {
       <section className="card">
         <h2>OpenTelemetry Collector exporters</h2>
         <p className="muted">
-          Forward metrics to{" "}
+          Configure{" "}
           <a href={contribRepoUrl} target="_blank" rel="noreferrer">
             OpenTelemetry Collector Contrib
           </a>{" "}
-          exporters. A Prometheus exporter on port 8889 is always included for local validation.
-          After applying, restart the collector:{" "}
+          exporters per pipeline. Sections shown match export modes for your selected BIG-IPs (
+          {collectorExportModes.metrics && collectorExportModes.logs
+            ? "metrics + logs"
+            : collectorExportModes.metrics
+              ? "metrics only"
+              : collectorExportModes.logs
+                ? "logs only"
+                : "none"}
+          ). After applying, restart the collector:{" "}
           <code>docker compose restart otel-collector</code>
         </p>
-        {exporters.map((exp, idx) => {
-          const spec = catalogByType.get(exp.type);
-          return (
-            <div key={idx} className="exporter-row">
-              <div className="row">
-                <div className="field">
-                  <label>Exporter type</label>
-                  <select
-                    value={exp.type}
-                    onChange={(e) => setExporterType(idx, e.target.value)}
-                  >
-                    {(catalogCategories.length > 0
-                      ? catalogCategories
-                      : [...new Set(catalog.map((c) => c.category ?? "Other"))]
-                    ).map((cat) => (
-                      <optgroup key={cat} label={cat}>
-                        {catalog
-                          .filter((c) => (c.category ?? "Other") === cat)
-                          .map((c) => (
-                            <option key={c.type} value={c.type}>
-                              {c.label}
-                            </option>
-                          ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={exp.enabled}
-                    onChange={(e) => updateExporter(idx, { enabled: e.target.checked })}
-                  />
-                  Enabled
-                </label>
-              </div>
-              {spec?.description && (
-                <p className="muted exporter-desc">
-                  {spec.description}
-                  {spec.doc_url && (
-                    <>
-                      {" "}
-                      <a href={spec.doc_url} target="_blank" rel="noreferrer">
-                        Docs
-                      </a>
-                    </>
-                  )}
-                </p>
-              )}
-              <div className="exporter-fields">{renderExporterFields(exp, idx)}</div>
-              <button type="button" className="btn btn-secondary" onClick={() => removeExporter(idx)}>
-                Remove
-              </button>
-            </div>
-          );
-        })}
+        {collectorExportModes.metrics &&
+          renderExporterSection(
+            "metrics",
+            "Metric exporters",
+            "Forward polled BIG-IP metrics (OTLP → collector). A Prometheus exporter on port 8889 is always included for local validation.",
+            metricExporters,
+            setMetricExporters,
+          )}
+        {collectorExportModes.logs &&
+          renderExporterSection(
+            "logs",
+            "Log exporters",
+            "Forward BIG-IP remote logs received on syslog :5140 and HSL tcplog :5141.",
+            logExporters,
+            setLogExporters,
+          )}
+        {!collectorExportModes.metrics && !collectorExportModes.logs && (
+          <p className="muted">
+            Connect to a BIG-IP with Export metrics and/or Export logs enabled to configure
+            collector pipelines.
+          </p>
+        )}
         <div className="actions">
-          <button type="button" className="btn btn-secondary" onClick={addExporter}>
-            Add exporter
-          </button>
           <button type="button" className="btn btn-primary" onClick={() => void applyCollector()}>
             Apply collector config
           </button>

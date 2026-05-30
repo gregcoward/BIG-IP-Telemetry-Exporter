@@ -23,61 +23,115 @@ GENERATED_CONFIG_PATH = Path(
 )
 
 
-def build_collector_config(
-    selected_exporters: list[dict[str, Any]],
+def _append_pipeline_exporters(
+    items: list[dict[str, Any]],
     *,
-    include_validation_prometheus: bool = True,
-) -> dict[str, Any]:
-    """
-    selected_exporters: [{type, params, enabled}]
-    Always includes OTLP receivers for the Python backend.
-    """
-    exporters: dict[str, Any] = {}
-    metric_exporters: list[str] = []
-
-    if include_validation_prometheus:
-        _, prom_block = resolve_exporter("prometheus", {"endpoint": "0.0.0.0:8889"})
-        exporters["prometheus/validation"] = prom_block
-        metric_exporters.append("prometheus/validation")
-
-    for idx, item in enumerate(selected_exporters):
+    pipeline: str,
+    exporters: dict[str, Any],
+    pipeline_keys: list[str],
+    include_validation_prometheus: bool = False,
+) -> None:
+    """Merge enabled exporter selections into the collector config for one pipeline."""
+    for idx, item in enumerate(items):
         if not item.get("enabled", True):
             continue
         etype = item["type"]
-        params = item.get("params") or {}
+        params = {**(item.get("params") or {}), "_pipeline": pipeline}
         if etype == "prometheus" and include_validation_prometheus:
-            # Avoid duplicate validation exporter; user prometheus adds extra instance
             component, block = resolve_exporter(etype, params)
             key = f"{component}/user{idx}"
         else:
             component, block = resolve_exporter(etype, params)
-            key = f"{component}/{idx}"
+            prefix = "m" if pipeline == "metrics" else "l"
+            key = f"{component}/{prefix}{idx}"
         exporters[key] = block
-        metric_exporters.append(key)
+        pipeline_keys.append(key)
 
-    if not metric_exporters:
-        _, prom_block = resolve_exporter("prometheus", {})
-        exporters["prometheus/validation"] = prom_block
-        metric_exporters.append("prometheus/validation")
 
-    config = {
-        "receivers": {
-            "otlp": {
-                "protocols": {
-                    "grpc": {"endpoint": "0.0.0.0:4317"},
-                    "http": {"endpoint": "0.0.0.0:4318"},
-                }
+def build_collector_config(
+    metric_exporters: list[dict[str, Any]],
+    log_exporters: list[dict[str, Any]] | None = None,
+    *,
+    export_metrics: bool = True,
+    export_logs: bool = True,
+    include_validation_prometheus: bool = True,
+) -> dict[str, Any]:
+    """
+    Build collector YAML from separate metric and log exporter selections.
+
+    metric_exporters / log_exporters: [{type, params, enabled}]
+    Pipelines are included only when the corresponding export mode is enabled.
+    """
+    log_exporters = log_exporters if log_exporters is not None else []
+
+    exporters: dict[str, Any] = {}
+    metric_pipeline_keys: list[str] = []
+    log_pipeline_keys: list[str] = []
+
+    if export_metrics:
+        if include_validation_prometheus:
+            _, prom_block = resolve_exporter("prometheus", {"endpoint": "0.0.0.0:8889"})
+            exporters["prometheus/validation"] = prom_block
+            metric_pipeline_keys.append("prometheus/validation")
+
+        _append_pipeline_exporters(
+            metric_exporters,
+            pipeline="metrics",
+            exporters=exporters,
+            pipeline_keys=metric_pipeline_keys,
+            include_validation_prometheus=include_validation_prometheus,
+        )
+
+        if not metric_pipeline_keys:
+            _, prom_block = resolve_exporter("prometheus", {})
+            exporters["prometheus/validation"] = prom_block
+            metric_pipeline_keys.append("prometheus/validation")
+
+    if export_logs:
+        _append_pipeline_exporters(
+            log_exporters,
+            pipeline="logs",
+            exporters=exporters,
+            pipeline_keys=log_pipeline_keys,
+        )
+        if not log_pipeline_keys:
+            exporters["debug/logs"] = {"verbosity": "basic"}
+            log_pipeline_keys.append("debug/logs")
+
+    receivers: dict[str, Any] = {}
+    pipelines: dict[str, Any] = {}
+
+    if export_metrics:
+        receivers["otlp"] = {
+            "protocols": {
+                "grpc": {"endpoint": "0.0.0.0:4317"},
+                "http": {"endpoint": "0.0.0.0:4318"},
+            }
+        }
+        pipelines["metrics"] = {
+            "receivers": ["otlp"],
+            "processors": ["memory_limiter", "batch"],
+            "exporters": metric_pipeline_keys,
+        }
+
+    if export_logs:
+        receivers["tcplog"] = {
+            "listen_address": f"0.0.0.0:{os.environ.get('BIGIP_LOG_HSL_PORT', '5141')}",
+        }
+        receivers["syslog"] = {
+            "tcp": {
+                "listen_address": f"0.0.0.0:{os.environ.get('BIGIP_LOG_SYSLOG_PORT', '5140')}",
             },
-            "tcplog": {
-                "listen_address": f"0.0.0.0:{os.environ.get('BIGIP_LOG_HSL_PORT', '5141')}",
-            },
-            "syslog": {
-                "tcp": {
-                    "listen_address": f"0.0.0.0:{os.environ.get('BIGIP_LOG_SYSLOG_PORT', '5140')}",
-                },
-                "protocol": "rfc5424",
-            },
-        },
+            "protocol": "rfc5424",
+        }
+        pipelines["logs"] = {
+            "receivers": ["syslog", "tcplog"],
+            "processors": ["memory_limiter", "batch"],
+            "exporters": log_pipeline_keys,
+        }
+
+    config: dict[str, Any] = {
+        "receivers": receivers,
         "processors": {
             "batch": {"timeout": "5s", "send_batch_size": 512},
             "memory_limiter": {
@@ -86,25 +140,11 @@ def build_collector_config(
                 "spike_limit_mib": 128,
             },
         },
-        "exporters": {
-            **exporters,
-            "debug/logs": {"verbosity": "basic"},
-        },
+        "exporters": exporters,
         "extensions": {"health_check": {"endpoint": "0.0.0.0:13133"}},
         "service": {
             "extensions": ["health_check"],
-            "pipelines": {
-                "metrics": {
-                    "receivers": ["otlp"],
-                    "processors": ["memory_limiter", "batch"],
-                    "exporters": metric_exporters,
-                },
-                "logs": {
-                    "receivers": ["syslog", "tcplog"],
-                    "processors": ["memory_limiter", "batch"],
-                    "exporters": ["debug/logs"],
-                },
-            },
+            "pipelines": pipelines,
             "telemetry": {
                 "logs": {"level": "info"},
                 "metrics": {"level": "basic"},
@@ -114,13 +154,36 @@ def build_collector_config(
     return config
 
 
-def write_collector_config(
+def build_collector_config_legacy(
     selected_exporters: list[dict[str, Any]],
     *,
+    include_validation_prometheus: bool = True,
+) -> dict[str, Any]:
+    """Back-compat wrapper: all exporters go to the metrics pipeline."""
+    return build_collector_config(
+        selected_exporters,
+        [],
+        export_metrics=True,
+        export_logs=True,
+        include_validation_prometheus=include_validation_prometheus,
+    )
+
+
+def write_collector_config(
+    metric_exporters: list[dict[str, Any]],
+    log_exporters: list[dict[str, Any]] | None = None,
+    *,
+    export_metrics: bool = True,
+    export_logs: bool = True,
     path: Path | None = None,
 ) -> Path:
     path = path or GENERATED_CONFIG_PATH
-    config = build_collector_config(selected_exporters)
+    config = build_collector_config(
+        metric_exporters,
+        log_exporters,
+        export_metrics=export_metrics,
+        export_logs=export_logs,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(config, f, sort_keys=False, default_flow_style=False)
@@ -131,6 +194,7 @@ __all__ = [
     "EXPORTER_TYPES",
     "CONTRIB_EXPORTERS_REPO",
     "build_collector_config",
+    "build_collector_config_legacy",
     "write_collector_config",
     "list_exporter_catalog",
     "list_contrib_components",

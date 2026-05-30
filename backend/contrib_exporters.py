@@ -107,6 +107,9 @@ class FieldSpec:
         return d
 
 
+_SIGNAL_BOTH = ("metrics", "logs")
+
+
 @dataclass(frozen=True)
 class ExporterSpec:
     type: str
@@ -116,6 +119,7 @@ class ExporterSpec:
     category: str
     fields: tuple[FieldSpec, ...] = ()
     doc_folder: str = ""
+    signals: tuple[str, ...] = ("metrics",)
     build: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     def default_params(self) -> dict[str, Any]:
@@ -132,6 +136,7 @@ class ExporterSpec:
             "label": self.label,
             "description": self.description,
             "category": self.category,
+            "signals": list(self.signals),
             "doc_folder": self.doc_folder or f"{self.component}exporter",
             "doc_url": f"{CONTRIB_EXPORTERS_REPO}/{self.doc_folder or self.component + 'exporter'}",
             "fields": [f.to_dict() for f in self.fields],
@@ -149,12 +154,13 @@ def _split_csv(value: str) -> list[str]:
 
 def _build_otlp_http(params: dict[str, Any]) -> dict[str, Any]:
     endpoint = str(_p(params, "endpoint", "http://localhost:4318"))
-    return {
-        "metrics_endpoint": str(
-            _p(params, "metrics_endpoint", f"{endpoint.rstrip('/')}/v1/metrics")
-        ),
-        "compression": _p(params, "compression", "gzip"),
-    }
+    base = endpoint.rstrip("/")
+    cfg: dict[str, Any] = {"compression": _p(params, "compression", "gzip")}
+    if params.get("_pipeline") == "logs":
+        cfg["logs_endpoint"] = str(_p(params, "logs_endpoint", f"{base}/v1/logs"))
+    else:
+        cfg["metrics_endpoint"] = str(_p(params, "metrics_endpoint", f"{base}/v1/metrics"))
+    return cfg
 
 
 def _build_otlp_grpc(params: dict[str, Any]) -> dict[str, Any]:
@@ -181,8 +187,13 @@ def _build_debug(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_file(params: dict[str, Any]) -> dict[str, Any]:
+    default_path = (
+        "/tmp/bigip-logs.json"
+        if params.get("_pipeline") == "logs"
+        else "/tmp/bigip-metrics.json"
+    )
     return {
-        "path": str(_p(params, "path", "/tmp/bigip-metrics.json")),
+        "path": str(_p(params, "path", default_path)),
         "rotation": {"max_megabytes": 10, "max_days": 1, "max_backups": 2},
     }
 
@@ -395,15 +406,21 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="otlp_http",
             component="otlphttp",
             label="OTLP HTTP",
-            description="Forward metrics to a remote OTLP/HTTP endpoint.",
+            description="Forward telemetry to a remote OTLP/HTTP endpoint.",
             category="Core",
             doc_folder="otlphttpexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("endpoint", "Base URL", default="http://localhost:4318"),
                 FieldSpec(
                     "metrics_endpoint",
                     "Metrics URL (optional)",
                     placeholder="Defaults to {base}/v1/metrics",
+                ),
+                FieldSpec(
+                    "logs_endpoint",
+                    "Logs URL (optional)",
+                    placeholder="Defaults to {base}/v1/logs",
                 ),
                 FieldSpec(
                     "compression",
@@ -419,9 +436,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="otlp_grpc",
             component="otlp",
             label="OTLP gRPC",
-            description="Forward metrics to a remote OTLP/gRPC endpoint.",
+            description="Forward telemetry to a remote OTLP/gRPC endpoint.",
             category="Core",
             doc_folder="otlpexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("endpoint", "host:port", default="localhost:4317"),
                 FieldSpec(
@@ -442,6 +460,7 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             description="Log telemetry to collector stdout.",
             category="Core",
             doc_folder="debugexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec(
                     "verbosity",
@@ -457,9 +476,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="file",
             component="file",
             label="File (JSON)",
-            description="Write metrics to a JSON file in the collector container.",
+            description="Write telemetry to a JSON file in the collector container.",
             category="Core",
             doc_folder="fileexporter",
+            signals=_SIGNAL_BOTH,
             fields=(FieldSpec("path", "File path", default="/tmp/bigip-metrics.json"),),
             build=_build_file,
         ),
@@ -516,9 +536,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="splunk_hec",
             component="splunk_hec",
             label="Splunk HEC",
-            description="Send metrics via Splunk HTTP Event Collector.",
+            description="Send telemetry via Splunk HTTP Event Collector.",
             category="Observability",
             doc_folder="splunkhecexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("token", "HEC token", field_type="password", required=True),
                 FieldSpec(
@@ -533,9 +554,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="coralogix",
             component="coralogix",
             label="Coralogix",
-            description="Send metrics to Coralogix.",
+            description="Send telemetry to Coralogix.",
             category="Observability",
             doc_folder="coralogixexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("private_key", "Private key", field_type="password", required=True),
                 FieldSpec("domain", "Domain", default="coralogix.com"),
@@ -548,9 +570,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="elasticsearch",
             component="elasticsearch",
             label="Elasticsearch",
-            description="Export metrics to Elasticsearch.",
+            description="Export telemetry to Elasticsearch.",
             category="Storage",
             doc_folder="elasticsearchexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec(
                     "endpoints",
@@ -580,9 +603,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="kafka",
             component="kafka",
             label="Kafka",
-            description="Export metrics to a Kafka topic (OTLP encoding).",
+            description="Export telemetry to a Kafka topic (OTLP encoding).",
             category="Messaging",
             doc_folder="kafkaexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("brokers", "Brokers (comma-separated)", default="localhost:9092"),
                 FieldSpec("topic", "Topic", default="otel-metrics"),
@@ -665,9 +689,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="opensearch",
             component="opensearch",
             label="OpenSearch",
-            description="Export metrics to OpenSearch.",
+            description="Export telemetry to OpenSearch.",
             category="Storage",
             doc_folder="opensearchexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec(
                     "endpoints",
@@ -681,9 +706,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="logzio",
             component="logzio",
             label="Logz.io",
-            description="Send metrics to Logz.io.",
+            description="Send telemetry to Logz.io.",
             category="Observability",
             doc_folder="logzioexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("token", "Token", field_type="password", required=True),
                 FieldSpec(
@@ -700,9 +726,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="sumologic",
             component="sumologic",
             label="Sumo Logic",
-            description="Send metrics to Sumo Logic.",
+            description="Send telemetry to Sumo Logic.",
             category="Observability",
             doc_folder="sumologicexporter",
+            signals=_SIGNAL_BOTH,
             fields=(FieldSpec("endpoint", "HTTP endpoint", required=True),),
             build=_build_sumologic,
         ),
@@ -710,9 +737,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="mezmo",
             component="mezmo",
             label="Mezmo",
-            description="Send metrics to Mezmo (LogDNA).",
+            description="Send telemetry to Mezmo (LogDNA).",
             category="Observability",
             doc_folder="mezmoexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("ingest_key", "Ingest key", field_type="password", required=True),
                 FieldSpec("ingest_url", "Ingest URL", default="https://api.mezmo.com/v1/ingest"),
@@ -785,9 +813,10 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             type="syslog",
             component="syslog",
             label="Syslog",
-            description="Export metrics via syslog.",
+            description="Export telemetry via syslog.",
             category="Messaging",
             doc_folder="syslogexporter",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec("endpoint", "Endpoint", default="udp://localhost:514"),
                 FieldSpec(
@@ -855,6 +884,7 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
             ),
             category="Advanced",
             doc_folder="",
+            signals=_SIGNAL_BOTH,
             fields=(
                 FieldSpec(
                     "component",

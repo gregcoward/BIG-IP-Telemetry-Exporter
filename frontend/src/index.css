@@ -373,6 +373,23 @@ a:hover {
   max-height: 240px;
 }
 
+.exporter-pipeline-section {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.exporter-pipeline-section:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.exporter-pipeline-section h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
 .exporter-row {
   border: 1px solid var(--border);
   border-radius: 8px;
