@@ -28,6 +28,23 @@ def _build_include(*, host: str, port: int) -> str:
     )
 
 
+def _strip_exporter_include_lines(include: str) -> tuple[str, bool]:
+    """Remove exporter-managed syslog-ng lines from a tm.sys.syslog include string."""
+    if _INCLUDE_MARKER not in include and "d_bigip_telemetry_exporter" not in include:
+        return include, False
+    filtered_lines: list[str] = []
+    for line in include.splitlines():
+        if _INCLUDE_MARKER in line:
+            continue
+        if "d_bigip_telemetry_exporter" in line:
+            continue
+        filtered_lines.append(line)
+    new_include = "\n".join(filtered_lines).strip()
+    if new_include:
+        new_include += "\n"
+    return new_include, True
+
+
 def ensure_system_syslog_forwarding(
     client: BigIPClient,
     *,
@@ -52,16 +69,8 @@ def ensure_system_syslog_forwarding(
         # add a fresh copy if the host/port changed.
         if desired.strip() in existing:
             return {"ok": True, "changed": False, "mode": "include", "target": f"{host}:{port}"}
-        new_include = existing
-        # Remove any previous lines containing our marker or destination/log lines.
-        filtered_lines: list[str] = []
-        for line in new_include.splitlines():
-            if _INCLUDE_MARKER in line:
-                continue
-            if "d_bigip_telemetry_exporter" in line:
-                continue
-            filtered_lines.append(line)
-        new_include = ("\n".join(filtered_lines).strip() + "\n" + desired).strip() + "\n"
+        new_include, _ = _strip_exporter_include_lines(existing)
+        new_include = (new_include.strip() + "\n" + desired).strip() + "\n"
     else:
         new_include = (existing.strip() + "\n" + desired).strip() + "\n"
 
@@ -71,4 +80,28 @@ def ensure_system_syslog_forwarding(
         raise BigIPError(f"Failed to configure system syslog forwarding: {exc}") from exc
 
     return {"ok": True, "changed": True, "mode": "include", "target": f"{host}:{port}"}
+
+
+def remove_system_syslog_forwarding(client: BigIPClient) -> dict[str, Any]:
+    """Remove exporter-managed syslog-ng include stanzas from /mgmt/tm/sys/syslog."""
+    current = client.get(SYSLOG_PATH)
+    if not isinstance(current, dict):
+        raise BigIPError("Unexpected /sys/syslog response shape")
+
+    existing = str(current.get("include") or "")
+    new_include, found = _strip_exporter_include_lines(existing)
+    if not found:
+        return {
+            "ok": True,
+            "changed": False,
+            "mode": "include",
+            "note": "Exporter system syslog forwarding was not present.",
+        }
+
+    try:
+        client.patch(SYSLOG_PATH, json_body={"include": new_include})
+    except BigIPError as exc:
+        raise BigIPError(f"Failed to remove system syslog forwarding: {exc}") from exc
+
+    return {"ok": True, "changed": True, "mode": "include"}
 

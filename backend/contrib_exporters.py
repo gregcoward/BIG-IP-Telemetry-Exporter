@@ -403,8 +403,8 @@ def _curated_specs() -> tuple[ExporterSpec, ...]:
         ExporterSpec(
             type="prometheus",
             component="prometheus",
-            label="Prometheus (scrape :8889)",
-            description="Expose metrics for Prometheus scrape (local validation).",
+            label="Prometheus (scrape)",
+            description="Expose metrics for Prometheus or compatible scrapers.",
             category="Core",
             doc_folder="prometheusexporter",
             fields=(

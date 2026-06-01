@@ -1,12 +1,11 @@
 # Kubernetes installation guide
 
-This document is the detailed companion to the [Kubernetes section in README](../README.md). For day-to-day UI workflow (multi-BIG-IP, export, Prometheus), see the **[User guide](user-guide.md)**.
+This document is the detailed companion to the [Kubernetes section in README](../README.md). For day-to-day UI workflow (multi-BIG-IP, export), see the **[User guide](user-guide.md)**.
 
 It describes how to run the **entire** BIG-IP Telemetry Exporter stack on Kubernetes:
 
 - **bigip-telemetry-backend** — Python API + React UI (single container image)
 - **otel-collector** — OpenTelemetry Collector Contrib (OTLP metrics, syslog `:5140`, tcplog `:5141`)
-- **prometheus** — scrapes the collector’s Prometheus exporter for validation
 
 ## Prerequisites
 
@@ -26,8 +25,6 @@ k8s/
 ├── base/                          # Full stack (includes sample Ingress)
 │   ├── namespace.yaml
 │   ├── configmap-otel-collector.yaml
-│   ├── configmap-prometheus.yaml
-│   ├── rbac-prometheus.yaml
 │   ├── deployment-*.yaml
 │   ├── service-*.yaml
 │   ├── ingress.yaml
@@ -83,7 +80,7 @@ docker push "${IMAGE}"
 IMAGE="${IMAGE}" ./scripts/k8s-deploy.sh minimal
 ```
 
-### 4. Access the UI and Prometheus
+### 4. Access the UI
 
 **Port-forward (minimal overlay):**
 
@@ -93,13 +90,9 @@ Use `--address 0.0.0.0` so the UI is reachable via your machine’s IP, not only
 export HOST_IP="$(./scripts/host-ip.sh)"   # LAN IP shown to clients
 
 kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/bigip-telemetry-backend 8001:8000
-kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/prometheus 9090:9090
 ```
 
-- UI + API: `http://<HOST-IP>:8001` (local port **8001** → service port 8000)  
-- Prometheus: `http://<HOST-IP>:9090`  
-
-Prometheus links in the UI use the hostname from your browser (e.g. `192.168.1.10:8001`), or set `ACCESS_HOST` on the backend Deployment.
+- UI + API: `http://<HOST-IP>:8001` (local port **8001** → service port 8000)
 
 **Ingress:** Update hosts in `k8s/base/ingress.yaml` or the `example` overlay patch, set `ingressClassName` for your controller, then apply an overlay that includes Ingress.
 
@@ -142,22 +135,6 @@ Credentials are **not** stored in Kubernetes Secrets by default—they are enter
 
 The backend uses `OTLP_HTTP_ENDPOINT=http://otel-collector.bigip-telemetry.svc.cluster.local:4318` and listens on container port **8000** (`PORT=8000` in the Deployment).
 
-### 7. Validate metrics in Prometheus (optional)
-
-In Prometheus, run a query such as:
-
-```promql
-bigip_tm_sys_memory{bigip_host="10.0.0.50", bigip_stat="memoryused"}
-```
-
-With multiple BIG-IPs:
-
-```promql
-sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)
-```
-
-Confirm the `otel-collector` scrape target is **UP** (Status → Targets).
-
 ## Environment variables (backend)
 
 | Variable | Default (K8s manifest) | Purpose |
@@ -165,10 +142,6 @@ Confirm the `otel-collector` scrape target is **UP** (Status → Targets).
 | `PORT` | `8000` | HTTP listen port inside the container (Service targets 8000) |
 | `OTLP_HTTP_ENDPOINT` | `http://otel-collector.bigip-telemetry.svc.cluster.local:4318` | Backend → collector (in-cluster) |
 | `ACCESS_HOST` | *(unset)* | Force browser link hostname; default = HTTP `Host` header |
-| `PROMETHEUS_BROWSER_PORT` | `9090` | Prometheus UI port on the host running port-forward |
-| `COLLECTOR_METRICS_BROWSER_PORT` | `8889` | Collector `/metrics` port on the host |
-| `PROMETHEUS_UI_URL` | *(optional)* | Override auto-detected Prometheus URL |
-| `COLLECTOR_METRICS_URL` | *(optional)* | Override auto-detected collector metrics URL |
 | `COLLECTOR_CONFIG_PATH` | `/tmp/collector-config.yaml` | Where API writes generated YAML |
 | `COLLECTOR_RESTART_HINT` | `kubectl ... rollout restart ...` | Shown after Apply in UI when auto-restart unavailable |
 | `BIGIP_LOG_SYSLOG_HOST` | *(auto)* | IP/hostname BIG-IP uses for remote log pools; must be reachable from BIG-IP |
@@ -228,7 +201,7 @@ Manual equivalent:
 kubectl delete -k k8s/overlays/local --wait --timeout=180s
 ```
 
-The namespace `bigip-telemetry` and all workloads (otel-collector, prometheus, backend) are removed. Port-forward processes on your workstation are not stopped automatically — press Ctrl+C in those terminals.
+The namespace `bigip-telemetry` and all workloads (otel-collector, backend) are removed. Port-forward processes on your workstation are not stopped automatically — press Ctrl+C in those terminals.
 
 Optional cleanup on your build host:
 
@@ -242,7 +215,7 @@ docker rmi bigip-telemetry-exporter:latest
 |---------|--------|
 | `ErrImagePull` / `authorization failed` for `bigip-telemetry-exporter` | Image is not on Docker Hub. Use `./scripts/k8s-deploy.sh local` after build+load, or `IMAGE=<registry>/... ./scripts/k8s-deploy.sh minimal` after push |
 | Backend `ImagePullBackOff` | Same as above; `kubectl describe pod` → Events |
-| No metrics in Prometheus | `kubectl logs deploy/otel-collector`; export started in UI? Devices checked for metrics? |
+| No metrics at downstream sink | `kubectl logs deploy/otel-collector`; export started in UI? Devices checked for metrics? Metric exporters configured? |
 | No logs in collector | BIG-IP → collector on 5140/5141? `BIGIP_LOG_SYSLOG_HOST` set correctly? Log exporters configured? |
 | OTLP errors in backend logs | Service `otel-collector` endpoints; port 4318 |
 | BIG-IP login fails | Network/firewall; TLS verify setting |

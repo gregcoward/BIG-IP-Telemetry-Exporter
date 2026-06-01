@@ -13,7 +13,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
 - [Install on Ubuntu Linux (without Kubernetes)](#install-on-ubuntu-linux-without-kubernetes)
   - [Prerequisites](#prerequisites)
   - [Step 1 — Clone the repository](#step-1--clone-the-repository)
-  - [Step 2 — Start OpenTelemetry Collector and Prometheus](#step-2--start-opentelemetry-collector-and-prometheus)
+  - [Step 2 — Start OpenTelemetry Collector](#step-2--start-opentelemetry-collector)
   - [Step 3 — Install and run the Python backend](#step-3--install-and-run-the-python-backend)
   - [Step 4 — Build the web UI (production)](#step-4--build-the-web-ui-production)
   - [Step 5 — Use the application](#step-5--use-the-application)
@@ -25,7 +25,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
   - [Prerequisites](#kubernetes-prerequisites)
   - [Step 1 — Build the backend image](#step-1--build-the-backend-image)
   - [Step 2 — Deploy the stack](#step-2--deploy-the-stack)
-  - [Step 3 — Open the UI and Prometheus](#step-3--open-the-ui-and-prometheus)
+  - [Step 3 — Open the UI](#step-3--open-the-ui)
   - [Step 4 — Use the application](#step-4--use-the-application-on-kubernetes)
   - [Step 5 — Uninstall](#step-5--uninstall)
   - [Manifests and overlays](#manifests-and-overlays)
@@ -47,15 +47,13 @@ flowchart LR
   API --> BIGIP2[BIG-IP 2]
   API -->|OTLP HTTP metrics| COL[OTEL Collector]
   API -->|syslog TCP / HSL| COL
-  COL --> PROM[Prometheus :8889 optional]
   COL --> DEST[Configured log and metric exporters]
 ```
 
 | Component | Role |
 |-----------|------|
 | **Python backend** | Sessions to one or more BIG-IPs; polls selected `/mgmt/.../stats` endpoints; configures remote logging via AS3 and system syslog; pushes OTLP metrics to the collector |
-| **OTEL Collector** | Receives OTLP metrics on `:4318`; receives BIG-IP logs on syslog `:5140` (ASM/AFM) and tcplog `:5141` (LTM request logging); exposes Prometheus on `:8889` plus UI-configured exporters |
-| **Prometheus** (optional) | Scrapes `otel-collector:8889` to verify metrics locally |
+| **OTEL Collector** | Receives OTLP metrics on `:4318`; receives BIG-IP logs on syslog `:5140` (ASM/AFM) and tcplog `:5141` (LTM request logging); forwards via UI-configured exporters |
 | **React frontend** | Multi-BIG-IP connect form, per-device log export toggles (provisioned modules only), API catalog, split metric/log collector exporters, export controls |
 
 ## User guide
@@ -71,7 +69,6 @@ flowchart TD
   C --> D[Configure collector metric and log exporters]
   D --> E[Apply collector config auto-restart]
   E --> F[Start export metrics and logs]
-  F --> G[Optional: Prometheus scrape :8889]
 ```
 
 | Step | UI section | Outcome |
@@ -80,7 +77,6 @@ flowchart TD
 | 2 | **API endpoints** | Choose which `/mgmt/...` paths to poll for metrics (stats paths recommended) |
 | 3 | **OpenTelemetry Collector exporters** | Configure metric and log exporters separately; **Apply collector config** restarts the collector |
 | 4 | **Export to collector** | Metrics via OTLP; logs via syslog/tcplog receivers on the collector |
-| 5 | **Validate metrics** (optional) | Prometheus UI / `:8889/metrics` to confirm metrics |
 
 ### UI overview
 
@@ -203,9 +199,7 @@ The UI has two sections:
 - **Metric exporters** — sinks for OTLP metrics from the Python backend (remote OTLP, file, etc.).
 - **Log exporters** — sinks for logs received on syslog `:5140` and tcplog `:5141`.
 
-A Prometheus exporter on **:8889** is always included for optional local validation (in addition to exporters you enable).
-
-1. Add or enable exporters in each section.
+1. Add or enable exporters in each section (for metrics, add a Prometheus scrape exporter, OTLP remote write, or other sink as needed).
 2. Click **Apply collector config** — writes `otel-collector/generated-config.yaml` and **restarts** the OpenTelemetry Collector (Docker Compose or `kubectl` when available).
 3. If restart fails, the UI shows a manual command. Set `COLLECTOR_AUTO_RESTART=false` to only write YAML without restarting.
 
@@ -226,24 +220,6 @@ Export status (and **Refresh status**) shows `running`, device count, `last_poin
 **Stop export** ends the background loop.
 
 REST equivalent: `POST /api/export/start` with body `{ "session_ids": ["..."], "endpoints": [...], "poll_interval_sec": 30, "otlp_endpoint": "..." }`. Empty `session_ids` exports all connected devices.
-
-### 5. Validate metrics (optional)
-
-Prometheus is included in the default Docker Compose stack. It scrapes the collector’s Prometheus exporter on **:8889**.
-
-| Link | Default URL |
-|------|-------------|
-| Prometheus UI | `http://<HOST-IP>:9090` |
-| Collector metrics | `http://<HOST-IP>:8889/metrics` |
-
-In Prometheus **Status → Targets**, job `otel-collector` should be **UP**. Example PromQL:
-
-```promql
-bigip_tm_sys_memory{bigip_host="10.0.0.50", bigip_stat="memoryused"}
-sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)
-```
-
-Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bigip_object` contains rolling-average substrings are skipped by default (`BIGIP_EXCLUDE_OBJECT_PATTERNS`).
 
 ### Multi-BIG-IP behavior
 
@@ -269,6 +245,7 @@ Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bi
 | `POST` | `/api/export/stop` | Stop export |
 | `GET` | `/api/export/status` | Loop status + connected devices |
 | `PATCH` | `/api/session/{session_id}/log-options` | Update log export toggles on a connected device |
+| `POST` | `/api/session/{session_id}/rollback` | Remove exporter log profiles and system syslog on BIG-IP |
 | `GET` | `/api/exporters/catalog` | Collector contrib exporter types and form fields |
 | `GET` | `/api/collector/control` | Collector restart mode and hints |
 | `GET` / `POST` | `/api/collector/config` | Read/write collector YAML (POST restarts collector when enabled) |
@@ -281,7 +258,7 @@ Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bi
 | `401 Authentication failed` | Check user/password and REST permissions |
 | Token extension warning | Reconnect before long runs, or ignore if export is under ~20 min |
 | AS3 / profile errors | Use **admin** account for AS3 install; allow up to 180s for `/info`; check `BIGIP_AS3_RPM_PATH`, provisioning, and `BIGIP_LOG_SYSLOG_HOST` (not loopback) |
-| No metrics in Prometheus | Export running? Devices checked for metrics? Collector up? OTLP URL correct? |
+| No metrics at downstream sink | Export running? Devices checked for metrics? Collector up? OTLP URL correct? Metric exporters configured? |
 | Only one device in metrics | Confirm multiple devices checked; use `bigip_host` in PromQL |
 | Log options missing | Module not provisioned on BIG-IP (LTM/ASM/AFM/AVR toggles hidden) |
 | `{"detail":"Not Found"}` on `/` | Build UI: `cd frontend && npm ci && npm run build`, restart API |
@@ -290,7 +267,7 @@ Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bi
 
 | Method | Best for |
 |--------|----------|
-| **[Ubuntu Linux](#install-on-ubuntu-linux-without-kubernetes)** | Single VM or bare-metal host, Docker for collector/Prometheus, Python for API + UI |
+| **[Ubuntu Linux](#install-on-ubuntu-linux-without-kubernetes)** | Single VM or bare-metal host, Docker for collector, Python for API + UI |
 | **[Kubernetes](#install-on-kubernetes)** | Clusters (EKS, GKE, OpenShift, kind, etc.) |
 
 Both methods run the same components; only packaging and networking differ.
@@ -337,7 +314,7 @@ cd BIG-IP-Telemetry-Exporter
 chmod +x scripts/*.sh
 ```
 
-### Step 2 — Start OpenTelemetry Collector and Prometheus
+### Step 2 — Start OpenTelemetry Collector
 
 ```bash
 ./scripts/init-collector-config.sh
@@ -345,20 +322,17 @@ docker compose up -d
 docker compose ps
 ```
 
-Verify containers are running:
+Verify the collector is running:
 
 | Service | Port | Purpose |
 |---------|------|---------|
 | `otel-collector` | 4318 | OTLP HTTP (backend sends metrics here) |
 | `otel-collector` | 5140 | Syslog receiver (ASM/AFM security logs, system syslog) |
 | `otel-collector` | 5141 | tcplog receiver (LTM request/response logs via HSL) |
-| `otel-collector` | 8889 | Prometheus exporter (`/metrics`) |
-| `prometheus` | 9090 | Prometheus UI |
+| `otel-collector` | 13133 | Health check |
 
 ```bash
-export HOST_IP="$(./scripts/host-ip.sh)"
-curl -s "http://${HOST_IP}:8889/metrics" | head -5
-curl -s "http://${HOST_IP}:9090/-/ready"
+curl -s "http://127.0.0.1:13133/"
 ```
 
 ### Step 3 — Install and run the Python backend
@@ -419,7 +393,6 @@ Follow the **[User guide](#user-guide)**. Quick checklist:
 3. **API endpoints** — select stats paths (defaults are pre-selected).
 4. **Collector exporters** (optional) → **Apply collector config** (auto-restarts collector).
 5. **Export** — OTLP `http://127.0.0.1:4318` → **Start export**.
-6. **Validate** (optional) — Prometheus at `http://<HOST-IP>:9090`, query `bigip_*` (use `bigip_host` when multiple devices).
 
 For log export, ensure BIG-IP can reach this host on **5140** and **5141**. Set `BIGIP_LOG_SYSLOG_HOST` if auto-detection picks the wrong address.
 
@@ -440,12 +413,9 @@ If UFW is enabled, allow the ports you need:
 
 ```bash
 sudo ufw allow 8001/tcp comment 'BIG-IP Telemetry UI/API'
-sudo ufw allow 9090/tcp comment 'Prometheus'
 # Required for BIG-IP remote logging when exporting logs:
 sudo ufw allow 5140/tcp comment 'OTEL syslog receiver'
 sudo ufw allow 5141/tcp comment 'OTEL HSL tcplog receiver'
-# Only if remote hosts must scrape collector metrics directly:
-sudo ufw allow 8889/tcp comment 'OTEL Prometheus exporter'
 ```
 
 ### Ubuntu troubleshooting
@@ -456,7 +426,7 @@ sudo ufw allow 8889/tcp comment 'OTEL Prometheus exporter'
 | `401 Authentication failed` | Username/password; account not locked; user has iControl REST permission |
 | `Login failed` / TLS errors | Try with **Verify TLS** unchecked, or install the BIG-IP management CA on Ubuntu |
 | `Token extension failed` | Warning only — connection can still work (~20 min token); fix token PATCH if needed |
-| No metrics in Prometheus | Export started? Devices checked for metrics? `docker compose logs otel-collector`; OTLP `http://127.0.0.1:4318` |
+| No metrics at downstream sink | Export started? Devices checked for metrics? Metric exporters configured? `docker compose logs otel-collector`; OTLP `http://127.0.0.1:4318` |
 | No logs in collector | BIG-IP can reach host on 5140/5141? `BIGIP_LOG_SYSLOG_HOST` not loopback? Profiles attached on virtual servers? |
 | Multiple devices, one host in queries | Use `bigip_host` label in PromQL; confirm all devices were checked before export |
 | `{"detail":"Not Found"}` on `/` | Run Step 4: `cd frontend && npm ci && npm run build`, restart API |
@@ -474,7 +444,7 @@ docker compose down
 
 ## Install on Kubernetes
 
-Deploy the **full application** (backend + UI, OpenTelemetry Collector, Prometheus) with manifests under [`k8s/`](k8s/) and [Kustomize](https://kustomize.io/).
+Deploy the **full application** (backend + UI and OpenTelemetry Collector) with manifests under [`k8s/`](k8s/) and [Kustomize](https://kustomize.io/).
 
 Detailed guide: **[`docs/kubernetes.md`](docs/kubernetes.md)**
 
@@ -486,21 +456,17 @@ flowchart TB
     ING[Ingress optional]
     BE[Deployment bigip-telemetry-backend]
     OC[Deployment otel-collector]
-    PR[Deployment prometheus]
   BE -->|OTLP HTTP :4318| OC
   BE -->|syslog :5140 / tcplog :5141| OC
-  PR -->|scrape :8889| OC
   end
   BE --> BIGIP[BIG-IP management API]
   ING --> BE
-  ING --> PR
 ```
 
 | Workload | Image | Service |
 |----------|-------|---------|
 | Backend + UI | `bigip-telemetry-exporter` (built from [`Dockerfile`](Dockerfile)) | `bigip-telemetry-backend:8000` |
-| OTEL Collector | `otel/opentelemetry-collector-contrib:0.109.0` | `otel-collector:4317/4318/8889` |
-| Prometheus | `prom/prometheus:v2.54.1` | `prometheus:9090` |
+| OTEL Collector | `otel/opentelemetry-collector-contrib:0.109.0` | `otel-collector:4317/4318` |
 
 ### Kubernetes prerequisites
 
@@ -552,7 +518,7 @@ Wait for pods:
 kubectl -n bigip-telemetry get pods
 ```
 
-### Step 3 — Open the UI and Prometheus
+### Step 3 — Open the UI
 
 Bind port-forwards on all interfaces so other machines can use your host IP:
 
@@ -561,10 +527,6 @@ export HOST_IP="$(./scripts/host-ip.sh)"
 
 kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/bigip-telemetry-backend 8001:8000
 # UI: http://<HOST-IP>:8001
-
-# In another terminal:
-kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/prometheus 9090:9090
-# Prometheus: http://<HOST-IP>:9090
 ```
 
 ### Step 4 — Use the application on Kubernetes
@@ -576,7 +538,6 @@ Follow the **[User guide](#user-guide)**. Kubernetes-specific checklist:
 3. Select APIs; configure **metric** and **log** collector exporters → **Apply collector config** (auto-restarts collector, or run `./scripts/k8s-apply-collector-config.sh`).
 4. **Start export** — OTLP endpoint should remain the in-cluster URL (`http://otel-collector.bigip-telemetry.svc.cluster.local:4318`).
 5. For log export, ensure BIG-IP can reach collector **5140** / **5141**; set `BIGIP_LOG_SYSLOG_HOST` on the backend if needed.
-6. Validate metrics (optional) at **`http://<HOST-IP>:9090`** (second port-forward).
 
 ### Step 5 — Uninstall
 
@@ -626,7 +587,7 @@ Do not deploy `minimal` without pushing an image — `bigip-telemetry-exporter:l
 |---------|----------------|
 | `ErrImagePull` / `authorization failed` | Image not on Docker Hub — use [`local` overlay](#step-2--deploy-the-stack) or push to your registry |
 | `401` / connect errors in UI | Pod network → BIG-IP management IP; TLS verify setting |
-| No metrics in Prometheus | Export started? Devices checked for metrics? `kubectl logs -n bigip-telemetry deploy/otel-collector` |
+| No metrics at downstream sink | Export started? Devices checked for metrics? Metric exporters configured? `kubectl logs -n bigip-telemetry deploy/otel-collector` |
 | No logs in collector | BIG-IP → collector on 5140/5141? `BIGIP_LOG_SYSLOG_HOST`? Log exporters configured? |
 | Backend pod not ready | Probes hit port 8000 — image must set `PORT=8000` (included in `Dockerfile`) |
 | Port-forward only on localhost | Add `--address 0.0.0.0` (see Step 3) |
@@ -645,10 +606,6 @@ export HOST_IP="$(./scripts/host-ip.sh)"   # e.g. 192.168.1.10
 |---------|------------------|---------------------------|
 | UI + API | `http://<HOST-IP>:8001` | `http://<HOST-IP>:8001` (port-forward → pod :8000) |
 | Vite dev UI | `http://<HOST-IP>:5173` | — |
-| Prometheus | `http://<HOST-IP>:9090` | `http://<HOST-IP>:9090` |
-| Collector `/metrics` | `http://<HOST-IP>:8889/metrics` | (in-cluster scrape) |
-
-The UI builds Prometheus/collector links from the browser hostname you use (or set `ACCESS_HOST` on the backend in Kubernetes).
 
 ## API catalog
 
@@ -667,8 +624,6 @@ The UI configures exporters from the [OpenTelemetry Collector Contrib](https://g
 | **Messaging** | Kafka, Pulsar, RabbitMQ, syslog |
 | **Advanced** | **Contrib exporter (custom YAML)** — any other contrib component; paste settings from upstream docs |
 
-A Prometheus exporter on **:8889** is always added for local validation (in addition to exporters you enable).
-
 After **Apply collector config**, the API restarts the collector when docker or kubectl is available. Set `COLLECTOR_AUTO_RESTART=false` to disable.
 
 - **Ubuntu (manual fallback):** `docker compose restart otel-collector`
@@ -685,7 +640,6 @@ Catalog API: `GET /api/exporters/catalog` (categories, field schemas, links to [
 | `BIGIP_EXCLUDE_OBJECT_PATTERNS` | `fiveminavg,fivesecavg,oneminavge,oneminavg` | Comma-separated substrings; if `bigip_object` contains any, the metric is skipped |
 | `PORT` | `8001` (local), `8000` (Docker/K8s image) | API listen port |
 | `OTLP_HTTP_ENDPOINT` | `http://127.0.0.1:4318` | Default OTLP URL in UI (K8s manifest overrides) |
-| `PROMETHEUS_UI_URL` | *(unset)* | Override Prometheus UI base URL for link generation |
 | `COLLECTOR_AUTO_RESTART` | `true` | Set `false` to write config without restarting the collector |
 | `COLLECTOR_RESTART_CMD` | _(unset)_ | Custom restart command (overrides auto-detect) |
 | `COLLECTOR_RESTART_MODE` | auto | `docker`, `kubernetes`, or `none` |

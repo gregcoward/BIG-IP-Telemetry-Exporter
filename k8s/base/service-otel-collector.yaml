@@ -21,9 +21,6 @@ spec:
     - name: tcplog
       port: 5141
       targetPort: tcplog
-    - name: prometheus
-      port: 8889
-      targetPort: prometheus
     - name: health
       port: 13133
       targetPort: health

@@ -23,33 +23,12 @@ GENERATED_CONFIG_PATH = Path(
 )
 
 
-VALIDATION_PROMETHEUS_ENDPOINT = "0.0.0.0:8889"
-
-
-def _prometheus_endpoint(params: dict[str, Any]) -> str:
-    return str(params.get("endpoint", VALIDATION_PROMETHEUS_ENDPOINT)).strip()
-
-
-def _skips_duplicate_validation_prometheus(
-    etype: str,
-    params: dict[str, Any],
-    *,
-    include_validation_prometheus: bool,
-) -> bool:
-    """The validation exporter already binds :8889; skip a second prometheus on the same port."""
-    if not include_validation_prometheus or etype != "prometheus":
-        return False
-    endpoint = _prometheus_endpoint(params)
-    return endpoint in {VALIDATION_PROMETHEUS_ENDPOINT, ":8889", "8889"}
-
-
 def _append_pipeline_exporters(
     items: list[dict[str, Any]],
     *,
     pipeline: str,
     exporters: dict[str, Any],
     pipeline_keys: list[str],
-    include_validation_prometheus: bool = False,
 ) -> None:
     """Merge enabled exporter selections into the collector config for one pipeline."""
     for idx, item in enumerate(items):
@@ -57,12 +36,6 @@ def _append_pipeline_exporters(
             continue
         etype = item["type"]
         params = {**(item.get("params") or {}), "_pipeline": pipeline}
-        if _skips_duplicate_validation_prometheus(
-            etype,
-            params,
-            include_validation_prometheus=include_validation_prometheus,
-        ):
-            continue
         component, block = resolve_exporter(etype, params)
         prefix = "m" if pipeline == "metrics" else "l"
         key = f"{component}/{prefix}{idx}"
@@ -80,7 +53,6 @@ def build_collector_config(
     *,
     export_metrics: bool = True,
     export_logs: bool = True,
-    include_validation_prometheus: bool = True,
 ) -> dict[str, Any]:
     """
     Build collector YAML from separate metric and log exporter selections.
@@ -98,23 +70,15 @@ def build_collector_config(
     log_pipeline_keys: list[str] = []
 
     if export_metrics:
-        if include_validation_prometheus:
-            _, prom_block = resolve_exporter("prometheus", {"endpoint": "0.0.0.0:8889"})
-            exporters["prometheus/validation"] = prom_block
-            metric_pipeline_keys.append("prometheus/validation")
-
         _append_pipeline_exporters(
             metric_exporters,
             pipeline="metrics",
             exporters=exporters,
             pipeline_keys=metric_pipeline_keys,
-            include_validation_prometheus=include_validation_prometheus,
         )
-
         if not metric_pipeline_keys:
-            _, prom_block = resolve_exporter("prometheus", {})
-            exporters["prometheus/validation"] = prom_block
-            metric_pipeline_keys.append("prometheus/validation")
+            exporters["debug/metrics"] = {"verbosity": "basic"}
+            metric_pipeline_keys.append("debug/metrics")
 
     if export_logs:
         _append_pipeline_exporters(
@@ -183,19 +147,9 @@ def build_collector_config(
     return config
 
 
-def build_collector_config_legacy(
-    selected_exporters: list[dict[str, Any]],
-    *,
-    include_validation_prometheus: bool = True,
-) -> dict[str, Any]:
+def build_collector_config_legacy(selected_exporters: list[dict[str, Any]]) -> dict[str, Any]:
     """Back-compat wrapper: all exporters go to the metrics pipeline."""
-    return build_collector_config(
-        selected_exporters,
-        [],
-        export_metrics=True,
-        export_logs=True,
-        include_validation_prometheus=include_validation_prometheus,
-    )
+    return build_collector_config(selected_exporters, [], export_metrics=True, export_logs=True)
 
 
 def write_collector_config(

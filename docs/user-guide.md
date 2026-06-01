@@ -38,7 +38,6 @@ flowchart TD
   D --> E[Configure collector exporters]
   E --> F[Apply collector config]
   F --> G[Start export]
-  G --> H[Optional: query Prometheus :9090]
 ```
 
 ## 1. Connect BIG-IP devices
@@ -86,6 +85,7 @@ When devices are connected, the **Connected status bar** lists each one. The con
 | **Logs → LTM / ASM / AFM / AVR** | Toggle module log profiles (shown only when that module is provisioned) |
 | **System → syslog (:5140)** | Toggle system syslog forwarding |
 | **Remove** | Disconnect (`DELETE /api/session/{session_id}`) |
+| **Rollback log config** | Remove exporter AS3 profiles and system syslog forwarding (`POST /api/session/{session_id}/rollback`) |
 | Warning text | Token extension, AS3, syslog, or provisioning failure |
 
 Changing log toggles on a connected device calls `PATCH /api/session/{session_id}/log-options` and re-applies AS3 profiles or system syslog as needed.
@@ -126,7 +126,7 @@ Stats endpoints (paths containing `/stats`) typically expose counters and gauges
 
 ## 3. Collector exporters (optional)
 
-The stack always exposes a Prometheus exporter on port **8889** for optional local validation. Additional exporters use [OpenTelemetry Collector Contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter) components.
+Configure metric and log exporters using [OpenTelemetry Collector Contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter) components (for example Prometheus scrape, OTLP remote write, or a vendor sink).
 
 The UI shows separate sections based on your connected devices:
 
@@ -153,6 +153,17 @@ docker compose restart otel-collector
 Set `COLLECTOR_AUTO_RESTART=false` on the backend to write YAML without restarting.
 
 Generated file: `otel-collector/generated-config.yaml`
+
+### Rollback log configuration (destructive)
+
+Use **Rollback log config** on a connected device to remove exporter-managed resources on that BIG-IP:
+
+- AS3 application (`Common/Shared` by default) — pools, log destinations, publishers, LTM/ASM/AFM/AVR profiles
+- System syslog include stanza marked `# bigip_telemetry_exporter_syslog_forwarding`
+
+Requires confirmation in the UI. The API safety latch is `confirm: true` on `POST /api/session/{session_id}/rollback`. Optionally disable steps with `delete_as3`, `remove_system_syslog`, or `save_sys_config_after`.
+
+This does **not** detach logging profiles from virtual servers or uninstall AS3. Deletion may fail if profiles remain in use.
 
 ## 4. Export metrics and logs
 
@@ -215,34 +226,6 @@ curl -s -X PATCH http://127.0.0.1:8001/api/session/<session_id>/log-options \
 
 Empty `session_ids` exports **all** connected devices. To target specific devices, pass their `session_id` values from `/api/bigips`.
 
-## 5. Validate metrics (optional)
-
-Prometheus is included in the default stack for local verification.
-
-| Surface | URL |
-|---------|-----|
-| Prometheus UI | `http://<HOST-IP>:9090` |
-| Collector metrics | `http://<HOST-IP>:8889/metrics` |
-
-### Checks
-
-1. **Status → Targets** — `otel-collector` job should be **UP**.
-2. Search metrics with prefix `bigip_`.
-3. With multiple devices, filter by label:
-
-   | Label | Meaning |
-   |-------|---------|
-   | `bigip_host` | BIG-IP management address |
-   | `bigip_stat` | Stat field name (`memoryfree`, `clientside.bitsIn`, …) |
-   | `bigip_object` | Short stats object slot (e.g. `memory_host_0`) |
-
-   ```promql
-   bigip_tm_sys_memory{bigip_host="10.0.0.50", bigip_stat="memoryused"}
-   sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)
-   ```
-
-Metrics are **not** exported when `bigip_object` contains `fiveminavg`, `fivesecavg`, or `oneminavge` / `oneminavg` (rolling averages). Override with env `BIGIP_EXCLUDE_OBJECT_PATTERNS` (comma-separated substrings).
-
 ## Multi-BIG-IP reference
 
 | Topic | Detail |
@@ -267,7 +250,7 @@ Metrics are **not** exported when `bigip_object` contains `fiveminavg`, `fivesec
 | No metrics | Export running? OTLP URL correct? Collector logs |
 | No logs | BIG-IP → host on 5140/5141? Profiles attached on virtual servers? Log exporters configured? |
 | Log toggles missing | Module not provisioned on that BIG-IP |
-| One device only | Multiple devices checked? PromQL `bigip_host` label |
+| One device only | Multiple devices checked? Filter by `bigip_host` attribute in your metrics backend |
 | UI 404 | `frontend/dist` built; API restarted |
 
 See also [Ubuntu troubleshooting](../README.md#ubuntu-troubleshooting) and [Kubernetes troubleshooting](kubernetes.md#troubleshooting).

@@ -412,3 +412,36 @@ def ensure_log_profiles_via_as3(
         log_syslog_target=f"{host}:{syslog_port()}" if include_asm or include_afm else None,
         log_hsl_target=f"{host}:{hsl_port()}" if include_ltm else None,
     )
+
+
+def as3_application_location() -> tuple[str, str]:
+    """Return AS3 tenant and application keys used for log profile declarations."""
+    tenant_name = _tenant()
+    return tenant_name, _application_key(tenant_name)
+
+
+def delete_log_profiles_application(client: BigIPClient) -> dict[str, Any]:
+    """DELETE the AS3 application containing exporter-managed log profiles."""
+    tenant, app_key = as3_application_location()
+    path = f"/mgmt/shared/appsvcs/declare/{tenant.strip('/')}/applications/{app_key.strip('/')}"
+    resp = client.delete(path)
+    if resp.status_code in (200, 202, 204):
+        if not (resp.text or "").strip():
+            return {"ok": True, "path": path, "status": resp.status_code}
+        try:
+            out = resp.json()
+            if isinstance(out, dict):
+                out.setdefault("ok", True)
+                out["path"] = path
+                return out
+        except ValueError:
+            pass
+        return {"ok": True, "path": path, "status": resp.status_code}
+    if resp.status_code == 404:
+        return {
+            "ok": True,
+            "path": path,
+            "status": 404,
+            "note": "AS3 application not found (already removed or never deployed).",
+        }
+    raise BigIPError(f"AS3 DELETE {path} failed ({resp.status_code}): {resp.text[:2000]}")

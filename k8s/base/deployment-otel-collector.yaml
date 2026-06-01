@@ -29,8 +29,6 @@ spec:
               containerPort: 5140
             - name: tcplog
               containerPort: 5141
-            - name: prometheus
-              containerPort: 8889
             - name: health
               containerPort: 13133
           volumeMounts:

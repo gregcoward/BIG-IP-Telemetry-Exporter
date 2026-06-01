@@ -588,6 +588,21 @@ a:hover {
   color: var(--status-not);
 }
 
+.device-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.card-compact {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--pre-bg);
+}
+
 .btn-sm {
   padding: 0.35rem 0.65rem;
   font-size: 0.85rem;

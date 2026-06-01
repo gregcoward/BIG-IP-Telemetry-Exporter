@@ -36,6 +36,11 @@ from backend.collector_config import (
 )
 from backend.collector_ops import auto_restart_enabled, control_status as collector_control_status, restart_collector, restart_hint
 from backend.log_forwarding import resolve_syslog_host, runtime_log_config
+from backend.log_rollback import (
+    clear_session_log_resources,
+    rollback_log_resources,
+    session_has_log_resources,
+)
 from backend.metrics_extractor import extract_metrics
 from backend.otel_export import MetricsExportLoop, OTLPMetricsPusher
 from backend.session_store import (
@@ -65,15 +70,6 @@ def _browser_host(request: Request) -> str:
         return explicit.split(":")[0]
     host_header = request.headers.get("host", "127.0.0.1:8001")
     return host_header.split(":")[0]
-
-
-def _browser_urls(request: Request) -> dict[str, str]:
-    host = _browser_host(request)
-    coll_port = os.environ.get("COLLECTOR_METRICS_BROWSER_PORT", "8889")
-    return {
-        "collector_metrics": os.environ.get("COLLECTOR_METRICS_URL")
-        or f"http://{host}:{coll_port}/metrics",
-    }
 
 
 @dataclass
@@ -374,6 +370,7 @@ def _session_to_dict(session_id: str, sess: _Session) -> dict[str, Any]:
         "prov_afm": sess.prov_afm,
         "prov_avr": sess.prov_avr,
         "connected_since": sess.created,
+        "has_log_resources": session_has_log_resources(sess),
     }
 
 
@@ -513,6 +510,25 @@ class LogOptionsBody(BaseModel):
     export_avr_logs: bool | None = None
 
 
+class RollbackBody(BaseModel):
+    confirm: bool = Field(
+        default=False,
+        description="Must be true to execute destructive rollback (safety latch)",
+    )
+    delete_as3: bool = Field(
+        default=True,
+        description="DELETE the AS3 application with exporter log profiles and pools",
+    )
+    remove_system_syslog: bool = Field(
+        default=True,
+        description="Remove exporter-managed syslog-ng include from /sys/syslog",
+    )
+    save_sys_config_after: bool = Field(
+        default=True,
+        description="POST save sys config after rollback changes",
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Unexpected errors only — do not swallow HTTPException (would turn 400 into 500)."""
@@ -544,10 +560,8 @@ def health() -> dict[str, str]:
 @app.get("/api/runtime-config")
 def runtime_config(request: Request) -> dict[str, str]:
     """Defaults for the UI; browser URLs follow the request Host (or ACCESS_HOST)."""
-    urls = _browser_urls(request)
     return {
         "otlp_endpoint": DEFAULT_OTLP_ENDPOINT,
-        "collector_metrics": urls["collector_metrics"],
         "collector_config_path": str(GENERATED_CONFIG_PATH),
         "access_host": _browser_host(request),
         **runtime_log_config(browser_host=_browser_host(request)),
@@ -844,6 +858,34 @@ def update_log_options(session_id: str, body: LogOptionsBody, request: Request) 
 
     _persist_runtime_state()
     return {"ok": True, "device": _session_to_dict(session_id, s)}
+
+
+@app.post("/api/session/{session_id}/rollback")
+def rollback_session_log_config(session_id: str, body: RollbackBody) -> dict[str, Any]:
+    """Remove exporter-managed AS3 log profiles and system syslog forwarding on a BIG-IP."""
+    if not body.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Rollback refused: set confirm=true in the JSON body (safety latch).",
+        )
+    s = _get_session(session_id)
+    try:
+        steps = rollback_log_resources(
+            s.client,
+            delete_as3=body.delete_as3,
+            remove_system_syslog=body.remove_system_syslog,
+            save_sys_config_after=body.save_sys_config_after,
+        )
+    except BigIPError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    clear_session_log_resources(s)
+    _persist_runtime_state()
+    return {
+        "ok": True,
+        "steps": steps,
+        "device": _session_to_dict(session_id, s),
+    }
 
 
 @app.post("/api/probe")

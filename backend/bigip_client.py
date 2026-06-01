@@ -259,6 +259,34 @@ class BigIPClient:
     def put(self, endpoint: str, *, json_body: dict[str, Any] | None = None) -> Any:
         return self._request("PUT", endpoint, json_body=json_body)
 
+    def delete(self, endpoint: str) -> requests.Response:
+        """DELETE with auth refresh; returns the raw response for status-specific handling."""
+        if not self._token:
+            self.login()
+        url = self._url(endpoint)
+
+        def send() -> requests.Response:
+            try:
+                return self._session.request(
+                    "DELETE",
+                    url,
+                    verify=self.verify_tls,
+                    timeout=self.timeout,
+                )
+            except requests.RequestException as exc:
+                raise BigIPError(f"DELETE {endpoint} failed: {exc}") from exc
+
+        r = send()
+        if r.status_code == 401:
+            self.login()
+            r = send()
+        return r
+
+    def save_sys_config(self) -> dict[str, Any]:
+        """REST equivalent of ``tmsh save sys config``."""
+        result = self.post("/mgmt/tm/sys/config", json_body={"command": "save"})
+        return result if isinstance(result, dict) else {"ok": True}
+
     def upload_bytes(
         self,
         endpoint: str,

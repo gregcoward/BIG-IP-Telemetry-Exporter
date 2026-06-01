@@ -12,13 +12,9 @@ labels:
 resources:
   - namespace.yaml
   - configmap-otel-collector.yaml
-  - configmap-prometheus.yaml
-  - rbac-prometheus.yaml
   - deployment-otel-collector.yaml
-  - deployment-prometheus.yaml
   - deployment-backend.yaml
   - service-otel-collector.yaml
-  - service-prometheus.yaml
   - service-backend.yaml
   - ingress.yaml
 

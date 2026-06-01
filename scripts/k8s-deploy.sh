@@ -53,7 +53,6 @@ fi
 echo ""
 echo "Waiting for rollouts..."
 kubectl -n bigip-telemetry rollout status deployment/otel-collector --timeout=120s
-kubectl -n bigip-telemetry rollout status deployment/prometheus --timeout=120s
 kubectl -n bigip-telemetry rollout status deployment/bigip-telemetry-backend --timeout=120s
 echo ""
 echo "Pods:"
@@ -62,8 +61,6 @@ HOST_IP="$("${ROOT}/scripts/host-ip.sh" 2>/dev/null || echo "<HOST-IP>")"
 echo ""
 echo "Port-forward (bind all interfaces so other machines can connect):"
 echo "  kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/bigip-telemetry-backend 8001:8000"
-echo "  kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/prometheus 9090:9090"
 echo ""
-echo "  UI:         http://${HOST_IP}:8001"
-echo "  Prometheus: http://${HOST_IP}:9090"
+echo "  UI: http://${HOST_IP}:8001"
 echo "  (Set HOST_IP if auto-detect is wrong: export HOST_IP=10.0.0.5)"

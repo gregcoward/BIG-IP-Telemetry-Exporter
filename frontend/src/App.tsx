@@ -107,6 +107,7 @@ type BigIPDevice = {
   prov_afm?: boolean;
   prov_avr?: boolean;
   connected_since?: number;
+  has_log_resources?: boolean;
 };
 
 function exportModeLabel(device: BigIPDevice): string {
@@ -130,6 +131,20 @@ function deviceHasModuleLogsActive(device: BigIPDevice): boolean {
 
 function deviceExportsLogs(device: BigIPDevice): boolean {
   return deviceHasModuleLogsActive(device) || Boolean(device.export_system_logs);
+}
+
+function deviceHasLogResources(device: BigIPDevice): boolean {
+  if (device.has_log_resources) return true;
+  return Boolean(
+    device.request_log_profile ||
+      device.asm_log_profile ||
+      device.afm_log_profile ||
+      device.http_analytics_profile ||
+      device.tcp_analytics_profile ||
+      device.system_syslog_target ||
+      device.log_syslog_target ||
+      device.log_hsl_target,
+  );
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -217,6 +232,11 @@ export default function App() {
   const [pollInterval, setPollInterval] = useState(30);
   const [otlpEndpoint, setOtlpEndpoint] = useState("http://127.0.0.1:4318");
   const [exportStatus, setExportStatus] = useState<Record<string, unknown> | null>(null);
+  const [rollbackResult, setRollbackResult] = useState<{
+    session_id: string;
+    label: string;
+    steps: unknown[];
+  } | null>(null);
 
   useEffect(() => {
     const resolved = resolveTheme(themeMode);
@@ -449,6 +469,44 @@ export default function App() {
           next.delete(sessionId);
           return next;
         });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshDevices],
+  );
+
+  const rollbackDeviceLogConfig = useCallback(
+    async (device: BigIPDevice) => {
+      const label = device.label || device.display_host;
+      const ok = window.confirm(
+        `Remove exporter log profiles and system syslog configuration on ${label} (${device.display_host})?\n\n` +
+          "This deletes AS3-managed pools, publishers, and logging/analytics profiles created by this tool, " +
+          "and removes the system syslog forwarder. Profiles still attached to virtual servers may block deletion.",
+      );
+      if (!ok) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await apiFetch(`/api/session/${encodeURIComponent(device.session_id)}/rollback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirm: true,
+            delete_as3: true,
+            remove_system_syslog: true,
+            save_sys_config_after: true,
+          }),
+        });
+        const data = await readJson<{ steps?: unknown[] }>(r);
+        setRollbackResult({
+          session_id: device.session_id,
+          label,
+          steps: data.steps ?? [],
+        });
+        await refreshDevices();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -908,8 +966,7 @@ export default function App() {
           <div className="app-header-main">
             <h1 className="app-title">BIG-IP Telemetry Exporter</h1>
             <p className="muted">
-              Export BIG-IP metrics and logs via OpenTelemetry Collector; validate metrics in
-              Prometheus.
+              Export BIG-IP metrics and logs via OpenTelemetry Collector.
             </p>
           </div>
         </div>
@@ -1077,16 +1134,47 @@ export default function App() {
                   </div>
                 </div>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => void disconnectDevice(d.session_id)}
-                >
-                  Remove
-                </button>
+                <div className="device-list-actions">
+                  {deviceHasLogResources(d) && (
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      title="Remove AS3 log profiles and system syslog forwarding on this BIG-IP"
+                      onClick={() => void rollbackDeviceLogConfig(d)}
+                    >
+                      Rollback log config
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void disconnectDevice(d.session_id)}
+                  >
+                    Remove
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
+        )}
+        {rollbackResult && (
+          <div className="card card-compact">
+            <h3 className="subsection-title">
+              Rollback on {rollbackResult.label}
+            </h3>
+            <p className="muted">
+              Exporter log resources were removed on the BIG-IP (best-effort). Virtual-server
+              profile attachments are not removed automatically.
+            </p>
+            <pre className="report-pre">{JSON.stringify(rollbackResult.steps, null, 2)}</pre>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setRollbackResult(null)}
+            >
+              Dismiss
+            </button>
+          </div>
         )}
         <h3 className="subsection-title">
           {devices.length > 0 ? "Add another BIG-IP" : "Connect BIG-IP"}
@@ -1277,7 +1365,7 @@ export default function App() {
           renderExporterSection(
             "metrics",
             "Metric exporters",
-            "Forward polled BIG-IP metrics (OTLP → collector). A Prometheus exporter on port 8889 is always included for local validation.",
+            "Forward polled BIG-IP metrics (OTLP → collector). Add a metric exporter below or metrics are logged via the debug exporter until you configure one.",
             metricExporters,
             setMetricExporters,
           )}
