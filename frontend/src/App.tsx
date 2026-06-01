@@ -1392,8 +1392,7 @@ export default function App() {
         <h2>Export to collector (OTLP)</h2>
         <p className="muted">
           Polls the checked BIG-IP devices in the connections list above (
-          {exportSelectedDevices.length} of {devices.length} connected). Metrics are sent to{" "}
-          <code>{DEFAULT_OTLP_ENDPOINT}</code>.
+          {exportSelectedDevices.length} of {devices.length} connected).
         </p>
         {devices.length > 0 && (
           <ul className="connected-chips connected-chips-compact" aria-label="BIG-IPs in export">
