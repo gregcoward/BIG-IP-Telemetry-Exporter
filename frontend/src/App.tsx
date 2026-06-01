@@ -111,11 +111,15 @@ type BigIPDevice = {
 
 function exportModeLabel(device: BigIPDevice): string {
   const metrics = device.export_metrics !== false;
-  const logs = device.export_logs !== false || device.export_system_logs !== false;
+  const logs = deviceExportsLogs(device);
   if (metrics && logs) return "Metrics + logs";
   if (metrics) return "Metrics only";
   if (logs) return "Logs only";
   return "None";
+}
+
+function deviceExportsLogs(device: BigIPDevice): boolean {
+  return device.export_logs !== false || Boolean(device.export_system_logs);
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -183,7 +187,6 @@ export default function App() {
   const [verifyTls, setVerifyTls] = useState(false);
   const [connectExportMetrics, setConnectExportMetrics] = useState(true);
   const [connectExportLogs, setConnectExportLogs] = useState(true);
-  const [connectExportSystemLogs, setConnectExportSystemLogs] = useState(false);
   const [devices, setDevices] = useState<BigIPDevice[]>([]);
   const [exportDeviceIds, setExportDeviceIds] = useState<Set<string>>(new Set());
 
@@ -281,7 +284,7 @@ export default function App() {
     if (src.length === 0) return { metrics: true, logs: true };
     return {
       metrics: src.some((d) => d.export_metrics !== false),
-      logs: src.some((d) => d.export_logs !== false),
+      logs: src.some((d) => deviceExportsLogs(d)),
     };
   }, [exportSelectedDevices, devices]);
 
@@ -317,16 +320,9 @@ export default function App() {
         host.trim() &&
           username.trim() &&
           password &&
-          (connectExportMetrics || connectExportLogs || connectExportSystemLogs),
+          (connectExportMetrics || connectExportLogs),
       ),
-    [
-      host,
-      username,
-      password,
-      connectExportMetrics,
-      connectExportLogs,
-      connectExportSystemLogs,
-    ],
+    [host, username, password, connectExportMetrics, connectExportLogs],
   );
 
   const connect = useCallback(async () => {
@@ -351,7 +347,6 @@ export default function App() {
           label: deviceLabel.trim(),
           export_metrics: connectExportMetrics,
           export_logs: connectExportLogs,
-          export_system_logs: connectExportSystemLogs,
         }),
       });
       const data = await readJson<{
@@ -382,7 +377,6 @@ export default function App() {
     verifyTls,
     connectExportMetrics,
     connectExportLogs,
-    connectExportSystemLogs,
     refreshDevices,
   ]);
 
@@ -518,7 +512,7 @@ export default function App() {
       .filter(
         (d) =>
           exportDeviceIds.has(d.session_id) &&
-          (d.export_metrics !== false || d.export_logs !== false),
+          (d.export_metrics !== false || deviceExportsLogs(d)),
       )
       .map((d) => d.session_id);
     if (sessionIds.length === 0) {
@@ -948,7 +942,8 @@ export default function App() {
         <h2>BIG-IP connections ({devices.length} connected)</h2>
         <p className="muted">
           Connect one or more management addresses. Metrics are tagged per device (
-          <code>bigip.host</code>). Reconnecting the same host replaces the previous session.
+          <code>bigip.host</code>). After connect, use per-device toggles for LTM/ASM/AFM/AVR logs and
+          system syslog. Reconnecting the same host replaces the previous session.
         </p>
         <h3 className="subsection-title">Currently connected</h3>
         {devices.length === 0 ? (
@@ -1030,7 +1025,7 @@ export default function App() {
                   )}
                   <div className="device-list-options-row">
                     <span className="muted">System</span>
-                    <label className="check">
+                    <label className="check" title="Forward BIG-IP system syslog to collector :5140">
                       <input
                         type="checkbox"
                         checked={Boolean(d.export_system_logs)}
@@ -1038,7 +1033,7 @@ export default function App() {
                           void updateDeviceLogOptions(d.session_id, { export_system_logs: e.target.checked })
                         }
                       />
-                      syslog
+                      syslog (:5140)
                     </label>
                   </div>
                 </div>
@@ -1099,14 +1094,6 @@ export default function App() {
               onChange={(e) => setConnectExportLogs(e.target.checked)}
             />
             Export logs (remote syslog/HSL profiles)
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={connectExportSystemLogs}
-              onChange={(e) => setConnectExportSystemLogs(e.target.checked)}
-            />
-            Export system logs (syslog-ng, send all to collector :5140)
           </label>
         </div>
         <label className="check">

@@ -128,8 +128,8 @@ kubectl -n bigip-telemetry rollout restart deployment/otel-collector
 See the **[User guide](user-guide.md)** for the full workflow. Summary:
 
 1. Open the UI (port-forward `8001:8000`).
-2. **Connect** with **Export metrics** and/or **Export logs** / **Export system logs**.
-3. Use per-device toggles for LTM/ASM/AFM/AVR (provisioned modules) and system syslog.
+2. **Connect** with **Export metrics** and/or **Export logs**.
+3. Use per-device toggles for LTM/ASM/AFM/AVR (provisioned modules) and **System → syslog (:5140)**.
 4. Check which devices to include in export.
 5. Configure **metric** and **log** collector exporters if needed → **Apply collector config**.
 6. Select API endpoints and **Start export**.

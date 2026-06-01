@@ -58,7 +58,8 @@ flowchart TD
 |----------|--------|
 | **Export metrics** | Include device in metric polling (OTLP → collector). |
 | **Export logs** | Deploy AS3 remote logging profiles for provisioned modules (LTM/ASM/AFM/AVR). |
-| **Export system logs** | Configure syslog-ng to forward system messages to collector **:5140**. |
+
+After connect, use per-device toggles for **LTM**, **ASM**, **AFM**, **AVR** (when provisioned), and **System → syslog (:5140)**.
 
 **Connect** / **Add BIG-IP** is enabled when host, username, password, and at least one export option are selected.
 
@@ -83,7 +84,7 @@ When devices are connected, the **Connected status bar** lists each one. The con
 |---------|--------|
 | Checkbox | Include device in export |
 | **Logs → LTM / ASM / AFM / AVR** | Toggle module log profiles (shown only when that module is provisioned) |
-| **System → syslog** | Toggle system syslog forwarding |
+| **System → syslog (:5140)** | Toggle system syslog forwarding |
 | **Remove** | Disconnect (`DELETE /api/session/{session_id}`) |
 | Warning text | Token extension, AS3, syslog, or provisioning failure |
 
@@ -247,7 +248,7 @@ Metrics are **not** exported when `bigip_object` contains `fiveminavg`, `fivesec
 | Topic | Detail |
 |-------|--------|
 | API list devices | `GET /api/bigips` or `GET /api/devices` |
-| Connect | `POST /api/connect` with `export_metrics`, `export_logs`, `export_system_logs`, and optional per-type flags |
+| Connect | `POST /api/connect` with `export_metrics`, `export_logs`, and optional per-type flags |
 | Log options | `PATCH /api/session/{session_id}/log-options` |
 | Metric collision | One metric name per REST stats endpoint; separated by `bigip_host`, `bigip_stat`, `bigip_object` labels |
 | Export scope (UI) | Checked devices only |

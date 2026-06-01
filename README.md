@@ -111,7 +111,7 @@ Open the UI (`http://<HOST-IP>:8001` on Ubuntu, or port-forward on Kubernetes).
 - **Remove** — logs out and drops that session (`DELETE /api/session/{id}`).
 - Reconnecting the **same host** replaces the previous session for that IP.
 
-On the connect form, choose **Export metrics**, **Export logs** (AS3 remote logging profiles), and/or **Export system logs** (syslog-ng → collector `:5140`).
+On the connect form, choose **Export metrics** and/or **Export logs** (AS3 remote logging profiles). Use per-device toggles after connect for LTM/ASM/AFM/AVR and **System → syslog (:5140)**.
 
 The **BIG-IP connections** card shows the count in its title and lists devices when connected. The top status bar appears only after the first device is connected.
 
@@ -120,7 +120,7 @@ Each connected device appears in a list with:
 - A **checkbox** — include or exclude from export (at least one must be checked before **Start export**).
 - **Label**, management address, and export mode summary.
 - **Logs** row — toggles for **LTM**, **ASM**, **AFM**, **AVR** (only if that module is provisioned on the device).
-- **System → syslog** — toggle system syslog forwarding to the collector.
+- **System → syslog (:5140)** — toggle system syslog forwarding to the collector (per device, after connect).
 - **Warning** — token extension, AS3, syslog, or provisioning issues.
 - **Remove** — disconnect the session.
 
