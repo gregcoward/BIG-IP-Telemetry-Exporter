@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetState
 import f5LogoUrl from "../../F5-logo-F5-rgb.svg";
 
 const THEME_STORAGE_KEY = "bigip-telemetry-ui-theme";
+const DEFAULT_OTLP_ENDPOINT = "http://127.0.0.1:4318";
 type ThemeMode = "light" | "dark" | "system";
 
 type ApiRow = {
@@ -230,7 +231,6 @@ export default function App() {
   const [collectorActionStatus, setCollectorActionStatus] = useState<string | null>(null);
 
   const [pollInterval, setPollInterval] = useState(30);
-  const [otlpEndpoint, setOtlpEndpoint] = useState("http://127.0.0.1:4318");
   const [exportStatus, setExportStatus] = useState<Record<string, unknown> | null>(null);
   const [rollbackResult, setRollbackResult] = useState<{
     session_id: string;
@@ -273,9 +273,7 @@ export default function App() {
         metrics_only?: boolean;
         modules?: string[];
         poll_interval_sec?: number;
-        otlp_endpoint?: string;
       };
-      otlp_endpoint?: string | null;
     }>(r);
     setExportStatus({
       ...data.loop,
@@ -286,8 +284,6 @@ export default function App() {
     }
     const cfg = data.export_config;
     if (cfg) {
-      if (cfg.otlp_endpoint) setOtlpEndpoint(cfg.otlp_endpoint);
-      else if (data.otlp_endpoint) setOtlpEndpoint(data.otlp_endpoint);
       if (cfg.poll_interval_sec) setPollInterval(cfg.poll_interval_sec);
       if (cfg.endpoints?.length) setSelectedEndpoints(new Set(cfg.endpoints));
       if (cfg.session_ids?.length) setExportDeviceIds(new Set(cfg.session_ids));
@@ -300,10 +296,9 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [apiRes, catRes, runtimeRes] = await Promise.all([
+        const [apiRes, catRes] = await Promise.all([
           apiFetch("/api/apis?metrics_only=false"),
           apiFetch("/api/exporters/catalog"),
-          apiFetch("/api/runtime-config"),
         ]);
         const apiData = await readJson<{
           apis: ApiRow[];
@@ -316,13 +311,11 @@ export default function App() {
           contrib_components?: ContribComponent[];
           contrib_repo_url?: string;
         }>(catRes);
-        const runtime = await readJson<{ otlp_endpoint?: string }>(runtimeRes);
         setApis(apiData.apis);
         setCatalog(catData.exporters);
         setCatalogCategories(catData.categories ?? []);
         setContribComponents(catData.contrib_components ?? []);
         if (catData.contrib_repo_url) setContribRepoUrl(catData.contrib_repo_url);
-        if (runtime.otlp_endpoint) setOtlpEndpoint(runtime.otlp_endpoint);
         const defaults = apiData.apis
           .filter((a) => a.collect_metrics === "true")
           .map((a) => a.endpoint);
@@ -647,7 +640,7 @@ export default function App() {
           metrics_only: metricsOnly,
           modules: moduleFilter ? [moduleFilter] : [],
           poll_interval_sec: pollInterval,
-          otlp_endpoint: otlpEndpoint,
+          otlp_endpoint: DEFAULT_OTLP_ENDPOINT,
         }),
       });
       const data = await readJson<{
@@ -672,7 +665,6 @@ export default function App() {
     metricsOnly,
     moduleFilter,
     pollInterval,
-    otlpEndpoint,
   ]);
 
   const stopExport = useCallback(async () => {
@@ -1400,7 +1392,8 @@ export default function App() {
         <h2>Export to collector (OTLP)</h2>
         <p className="muted">
           Polls the checked BIG-IP devices in the connections list above (
-          {exportSelectedDevices.length} of {devices.length} connected).
+          {exportSelectedDevices.length} of {devices.length} connected). Metrics are sent to{" "}
+          <code>{DEFAULT_OTLP_ENDPOINT}</code>.
         </p>
         {devices.length > 0 && (
           <ul className="connected-chips connected-chips-compact" aria-label="BIG-IPs in export">
@@ -1417,10 +1410,6 @@ export default function App() {
           </ul>
         )}
         <div className="row">
-          <div className="field">
-            <label>OTLP HTTP endpoint (Python → collector)</label>
-            <input value={otlpEndpoint} onChange={(e) => setOtlpEndpoint(e.target.value)} />
-          </div>
           <div className="field">
             <label>Poll interval (seconds)</label>
             <input
