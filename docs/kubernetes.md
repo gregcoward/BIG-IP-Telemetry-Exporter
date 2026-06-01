@@ -5,7 +5,7 @@ This document is the detailed companion to the [Kubernetes section in README](..
 It describes how to run the **entire** BIG-IP Telemetry Exporter stack on Kubernetes:
 
 - **bigip-telemetry-backend** — Python API + React UI (single container image)
-- **otel-collector** — OpenTelemetry Collector Contrib
+- **otel-collector** — OpenTelemetry Collector Contrib (OTLP metrics, syslog `:5140`, tcplog `:5141`)
 - **prometheus** — scrapes the collector’s Prometheus exporter for validation
 
 ## Prerequisites
@@ -16,6 +16,7 @@ It describes how to run the **entire** BIG-IP Telemetry Exporter stack on Kubern
 | `kubectl` | Configured for your cluster |
 | Container runtime | To build/push the backend image (`docker` or `podman`) |
 | Network path to BIG-IP | Pods must reach the BIG-IP management IP (typically HTTPS :443) |
+| Network path for logs | BIG-IP must reach the collector on **5140** (syslog) and **5141** (HSL tcplog) — often via NodePort, LoadBalancer, or routable pod/node IP |
 | Optional Ingress | Only if you use the `base` or `example` overlay with Ingress enabled |
 
 ## Manifest layout
@@ -127,32 +128,35 @@ kubectl -n bigip-telemetry rollout restart deployment/otel-collector
 See the **[User guide](user-guide.md)** for the full workflow. Summary:
 
 1. Open the UI (port-forward `8001:8000`).
-2. **Connect** the first BIG-IP, then **Add BIG-IP** for additional devices.
-3. Check which devices to include in export.
-4. Select API endpoints and **Start export**.
+2. **Connect** with **Export metrics** and/or **Export logs** / **Export system logs**.
+3. Use per-device toggles for LTM/ASM/AFM/AVR (provisioned modules) and system syslog.
+4. Check which devices to include in export.
+5. Configure **metric** and **log** collector exporters if needed → **Apply collector config**.
+6. Select API endpoints and **Start export**.
 
 Credentials are **not** stored in Kubernetes Secrets by default—they are entered in the UI per session (same as local/docker). Ensure:
 
 - Every management IP is reachable from pods.
 - TLS verification matches your BIG-IP cert (checkbox in UI).
+- For log export, BIG-IP can reach the collector syslog/tcplog ports. Set `BIGIP_LOG_SYSLOG_HOST` on the backend Deployment to an address BIG-IP can route to (not loopback).
 
 The backend uses `OTLP_HTTP_ENDPOINT=http://otel-collector.bigip-telemetry.svc.cluster.local:4318` and listens on container port **8000** (`PORT=8000` in the Deployment).
 
-### 7. Validate metrics in Prometheus
+### 7. Validate metrics in Prometheus (optional)
 
 In Prometheus, run a query such as:
 
 ```promql
-bigip_tm_ltm_virtual_stats
+bigip_tm_sys_memory{bigip_host="10.0.0.50", bigip_stat="memoryused"}
 ```
 
 With multiple BIG-IPs:
 
 ```promql
-bigip_tm_ltm_virtual_stats{bigip_host="10.0.0.50"}
+sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)
 ```
 
-Confirm the `otel-collector` scrape target is **UP** (Status → Targets). Use **Reload Prometheus** or **Restart Prometheus** in the UI when needed.
+Confirm the `otel-collector` scrape target is **UP** (Status → Targets).
 
 ## Environment variables (backend)
 
@@ -166,11 +170,15 @@ Confirm the `otel-collector` scrape target is **UP** (Status → Targets). Use *
 | `PROMETHEUS_UI_URL` | *(optional)* | Override auto-detected Prometheus URL |
 | `COLLECTOR_METRICS_URL` | *(optional)* | Override auto-detected collector metrics URL |
 | `COLLECTOR_CONFIG_PATH` | `/tmp/collector-config.yaml` | Where API writes generated YAML |
-| `COLLECTOR_RESTART_HINT` | `kubectl ... rollout restart ...` | Shown after Apply in UI |
+| `COLLECTOR_RESTART_HINT` | `kubectl ... rollout restart ...` | Shown after Apply in UI when auto-restart unavailable |
+| `BIGIP_LOG_SYSLOG_HOST` | *(auto)* | IP/hostname BIG-IP uses for remote log pools; must be reachable from BIG-IP |
+| `COLLECTOR_AUTO_RESTART` | `true` | Set `false` to write config without restarting collector |
 
 ## BIG-IP network connectivity
 
-The exporter pod must reach BIG-IP management interfaces. Common patterns:
+The exporter pod must reach BIG-IP management interfaces. For **log export**, BIG-IP must also reach the collector on ports **5140** and **5141**. In many clusters the collector Service is ClusterIP-only; expose those ports via NodePort, LoadBalancer, or host networking, then set `BIGIP_LOG_SYSLOG_HOST` to an address BIG-IP can reach.
+
+Common patterns for management API access:
 
 - BIG-IP on a routable network from worker nodes.
 - Cloud hybrid / VPN / transit gateway.
@@ -234,7 +242,8 @@ docker rmi bigip-telemetry-exporter:latest
 |---------|--------|
 | `ErrImagePull` / `authorization failed` for `bigip-telemetry-exporter` | Image is not on Docker Hub. Use `./scripts/k8s-deploy.sh local` after build+load, or `IMAGE=<registry>/... ./scripts/k8s-deploy.sh minimal` after push |
 | Backend `ImagePullBackOff` | Same as above; `kubectl describe pod` → Events |
-| No metrics in Prometheus | `kubectl logs deploy/otel-collector`; export started in UI? |
+| No metrics in Prometheus | `kubectl logs deploy/otel-collector`; export started in UI? Devices checked for metrics? |
+| No logs in collector | BIG-IP → collector on 5140/5141? `BIGIP_LOG_SYSLOG_HOST` set correctly? Log exporters configured? |
 | OTLP errors in backend logs | Service `otel-collector` endpoints; port 4318 |
 | BIG-IP login fails | Network/firewall; TLS verify setting |
 | Ingress 404 | Host/DNS; `ingressClassName`; backend service port 8000 |

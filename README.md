@@ -1,8 +1,8 @@
 # BIG-IP Telemetry Exporter
 
-Pull metrics from F5 BIG-IP iControl REST APIs, export them via **OTLP** to an [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector), and validate receipt with a local **Prometheus** instance.
+Pull **metrics** from F5 BIG-IP iControl REST APIs and forward **logs** from BIG-IP (LTM, ASM, AFM, AVR, and system syslog) to an [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) using separate metric and log pipelines.
 
-The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Configurator](https://github.com/gregcoward/BIG-IP-Telemetry-Streaming-Validator-and-Configurator): connect to one or more BIG-IPs, select APIs, configure collector exporters, and run export.
+The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Configurator](https://github.com/gregcoward/BIG-IP-Telemetry-Streaming-Configurator): connect to one or more BIG-IPs, choose what to export, configure collector exporters, and start export.
 
 ## Table of contents
 
@@ -45,17 +45,18 @@ flowchart LR
   UI[React UI] --> API[Python FastAPI]
   API --> BIGIP1[BIG-IP 1]
   API --> BIGIP2[BIG-IP 2]
-  API -->|OTLP HTTP| COL[OTEL Collector]
-  COL --> PROM[Prometheus scrape :8889]
-  COL --> DEST[Optional exporters OTLP debug file]
+  API -->|OTLP HTTP metrics| COL[OTEL Collector]
+  API -->|syslog TCP / HSL| COL
+  COL --> PROM[Prometheus :8889 optional]
+  COL --> DEST[Configured log and metric exporters]
 ```
 
 | Component | Role |
 |-----------|------|
-| **Python backend** | Authenticates to one or more BIG-IPs, polls selected `/mgmt/...` endpoints per device, converts nested stats to metric points tagged with `bigip.host`, pushes OTLP HTTP to the collector |
-| **OTEL Collector** | Receives OTLP; processes with batch/memory_limiter; exposes Prometheus exporter on `:8889` plus any UI-configured exporters |
-| **Prometheus** | Scrapes `otel-collector:8889` to confirm metrics flowed through the collector |
-| **React frontend** | Connected-device status bar, multi-BIG-IP sessions, API catalog, contrib exporter configuration, export and Prometheus controls |
+| **Python backend** | Sessions to one or more BIG-IPs; polls selected `/mgmt/.../stats` endpoints; configures remote logging via AS3 and system syslog; pushes OTLP metrics to the collector |
+| **OTEL Collector** | Receives OTLP metrics on `:4318`; receives BIG-IP logs on syslog `:5140` (ASM/AFM) and tcplog `:5141` (LTM request logging); exposes Prometheus on `:8889` plus UI-configured exporters |
+| **Prometheus** (optional) | Scrapes `otel-collector:8889` to verify metrics locally |
+| **React frontend** | Multi-BIG-IP connect form, per-device log export toggles (provisioned modules only), API catalog, split metric/log collector exporters, export controls |
 
 ## User guide
 
@@ -65,28 +66,31 @@ End-to-end workflow after [installation](#installation-options). Expanded copy: 
 
 ```mermaid
 flowchart TD
-  A[Connect BIG-IP devices] --> B[Select iControl REST endpoints]
-  B --> C[Apply collector exporters optional]
-  C --> D[Start export OTLP]
-  D --> E[Validate in Prometheus]
+  A[Connect BIG-IP devices] --> B[Enable log types per provisioned module]
+  B --> C[Select metrics API endpoints]
+  C --> D[Configure collector metric and log exporters]
+  D --> E[Apply collector config auto-restart]
+  E --> F[Start export metrics and logs]
+  F --> G[Optional: Prometheus scrape :8889]
 ```
 
 | Step | UI section | Outcome |
 |------|------------|---------|
-| 1 | **BIG-IP connections** | One or more authenticated sessions to management IPs |
-| 2 | **API endpoints** | Choose which `/mgmt/...` paths to poll (stats paths recommended) |
-| 3 | **OpenTelemetry Collector exporters** | Optional extra sinks (remote OTLP, file, debug) |
-| 4 | **Export to collector** | Periodic poll → OTLP HTTP → collector → Prometheus scrape |
-| 5 | **Validate metrics** | Confirm collector exporter is up and query metrics |
+| 1 | **BIG-IP connections** | Authenticate; enable per-device log types (LTM, ASM, AFM, AVR, system) based on provisioned modules |
+| 2 | **API endpoints** | Choose which `/mgmt/...` paths to poll for metrics (stats paths recommended) |
+| 3 | **OpenTelemetry Collector exporters** | Configure metric and log exporters separately; **Apply collector config** restarts the collector |
+| 4 | **Export to collector** | Metrics via OTLP; logs via syslog/tcplog receivers on the collector |
+| 5 | **Validate metrics** (optional) | Prometheus UI / `:8889/metrics` to confirm metrics |
 
 ### UI overview
 
 | Area | What it shows |
 |------|----------------|
-| **Connected status bar** (top, when ≥1 device) | Count, chip per device, export selection summary, **Refresh list**, auto-refresh every 45 seconds |
-| **BIG-IP connections** | Full device list with export checkboxes, **Remove**, and the connect form |
-| **Export to collector** | How many devices are selected (`X of Y connected`) |
-| **Validate metrics** | Links and example queries |
+| **Connected status bar** (top, when ≥1 device) | Count, chips, export selection summary, **Refresh list**, auto-refresh every 45 seconds |
+| **BIG-IP connections** | Device list with export checkboxes, per-device log toggles (LTM/ASM/AFM/AVR when provisioned), system syslog, **Remove**, connect form |
+| **API endpoints** | iControl REST path catalog for metrics |
+| **OpenTelemetry Collector exporters** | Separate **metric** and **log** exporter sections; apply restarts collector |
+| **Export to collector** | OTLP metrics settings and poll interval |
 
 After `git pull`, rebuild the UI if you serve production assets: `cd frontend && npm ci && npm run build`, then restart the API.
 
@@ -101,27 +105,42 @@ Open the UI (`http://<HOST-IP>:8001` on Ubuntu, or port-forward on Kubernetes).
 | **Username / Password** | Account with iControl REST access (often `admin`). |
 | **Verify TLS** | Uncheck for default self-signed BIG-IP management certificates. |
 
-- **Connect** / **Add BIG-IP** — enabled only when **management host**, **username**, and **password** are all filled in.
+- **Connect** / **Add BIG-IP** — enabled when host, username, password, and at least one export option (metrics and/or logs) are selected.
 - **Connect** — first device.
 - **Add BIG-IP** — additional devices without disconnecting others.
 - **Remove** — logs out and drops that session (`DELETE /api/session/{id}`).
 - Reconnecting the **same host** replaces the previous session for that IP.
+
+On the connect form, choose **Export metrics**, **Export logs** (AS3 remote logging profiles), and/or **Export system logs** (syslog-ng → collector `:5140`).
 
 The **BIG-IP connections** card shows the count in its title and lists devices when connected. The top status bar appears only after the first device is connected.
 
 Each connected device appears in a list with:
 
 - A **checkbox** — include or exclude from export (at least one must be checked before **Start export**).
-- **Label** and management address.
-- A **warning** if token extension or logging-profile setup failed.
-- **Log and analytics profiles** — on connect the exporter checks for **F5 AS3** (installs from `BIGIP_AS3_RPM_PATH` when missing), verifies module provisioning, then **POST**s an AS3 declaration to `/mgmt/shared/appsvcs/declare` with local logging/analytics objects:
-  - **LTM** `/Common/bigip-telemetry-requestlog` — `Traffic_Log_Profile` (request/response templates)
-  - **ASM** `/Common/bigip-telemetry-asm-log` — `Security_Log_Profile` (application, local storage, `requestType` all)
-  - **AFM** `/Common/bigip-telemetry-afm-log` — `Security_Log_Profile` (network, `local-db-publisher`)
-  - **AVR HTTP** `/Common/bigip-telemetry-http-analytics` — `Analytics_Profile`
-  - **AVR TCP** `/Common/bigip-telemetry-tcp-analytics` — `Analytics_TCP_Profile`
+- **Label**, management address, and export mode summary.
+- **Logs** row — toggles for **LTM**, **ASM**, **AFM**, **AVR** (only if that module is provisioned on the device).
+- **System → syslog** — toggle system syslog forwarding to the collector.
+- **Warning** — token extension, AS3, syslog, or provisioning issues.
+- **Remove** — disconnect the session.
 
-Attach LTM as **Request Logging**; ASM/AFM as **Security Log Profiles**; analytics profiles on virtual servers when using AVR. Profiles for unprovisioned modules are omitted (no warning). OTLP log forwarding will be added in a later release.
+On connect (and when you change log toggles), the backend:
+
+1. Reads module provisioning (`ltm`, `asm`, `afm`, `avr`).
+2. Optionally configures **system syslog** forwarding (`/mgmt/tm/sys/syslog` include → TCP `:5140`).
+3. If any module log profile is enabled, verifies **F5 AS3**, then **POST**s an AS3 declaration with logging/analytics objects for provisioned modules only:
+
+| Profile | Default path | Attach on virtual server | Collector port |
+|---------|--------------|--------------------------|----------------|
+| LTM request-log | `/Common/bigip-telemetry-requestlog` | **Request Logging** | HSL tcplog **5141** |
+| ASM security log | `/Common/bigip-telemetry-asm-log` | **Security Log Profile** (Application Security) | syslog **5140** |
+| AFM security log | `/Common/bigip-telemetry-afm-log` | **Security Log Profile** (Network Firewall) | syslog **5140** |
+| AVR HTTP analytics | `/Common/bigip-telemetry-http-analytics` | HTTP **Analytics** profile | (analytics events) |
+| AVR TCP analytics | `/Common/bigip-telemetry-tcp-analytics` | TCP **Analytics** profile | (analytics events) |
+
+Use **`PATCH /api/session/{session_id}/log-options`** to change log types on a connected device without reconnecting.
+
+**Log reachability:** BIG-IP must reach the collector host on **5140** and **5141**. The backend auto-detects a LAN IP for remote log pools; set `BIGIP_LOG_SYSLOG_HOST` if auto-detection fails. Do **not** use `127.0.0.1` — BIG-IP rejects loopback destinations.
 
 Credentials stay in the API process memory (not written to disk by default). Restarting the backend clears all sessions.
 
@@ -131,9 +150,9 @@ Credentials stay in the API process memory (not written to disk by default). Res
 | `BIGIP_ASM_LOG_PROFILE_NAME` | `bigip-telemetry-asm-log` | ASM security log profile name |
 | `BIGIP_AFM_LOG_PROFILE_NAME` | `bigip-telemetry-afm-log` | AFM security log profile name |
 | `BIGIP_LOG_PROFILE_PARTITION` | `Common` | Partition for all exporter-managed profiles |
-| `BIGIP_LOG_SYSLOG_HOST` | Auto-detected LAN IP | IP/hostname BIG-IP uses for remote log pools (must not be loopback) |
-| `BIGIP_LOG_SYSLOG_PORT` | `5140` | Collector syslog receiver (ASM/AFM) |
-| `BIGIP_LOG_HSL_PORT` | `5141` | Collector tcplog receiver (LTM request logging) |
+| `BIGIP_LOG_SYSLOG_HOST` | Auto-detected LAN IP (or browser host); must be reachable from BIG-IP — not `127.0.0.1` |
+| `BIGIP_LOG_SYSLOG_PORT` | `5140` | Collector syslog receiver (ASM/AFM security logs, RFC5424) |
+| `BIGIP_LOG_HSL_PORT` | `5141` | Collector tcplog receiver (LTM request/response logs via HSL) |
 | `BIGIP_REQUEST_LOG_AUTO_CREATE` | `true` | Set `false` to skip LTM profile on connect |
 | `BIGIP_ASM_LOG_AUTO_CREATE` | `true` | Set `false` to skip ASM profile on connect |
 | `BIGIP_AFM_LOG_AUTO_CREATE` | `true` | Set `false` to skip AFM profile on connect |
@@ -161,16 +180,16 @@ Defaults pre-select stats endpoints. Prefer `.../stats` paths for time-series st
 
 ### 3. Configure collector exporters (optional)
 
-Use **OpenTelemetry Collector exporters** to add sinks beyond the built-in Prometheus exporter on port **8889** (always used for local validation).
+The UI has two sections:
 
-1. Add or enable exporters (`otlp_http`, `otlp_grpc`, `debug`, `file`, etc.).
-2. **Apply collector config** — writes `otel-collector/generated-config.yaml` and automatically restarts the collector (docker compose or kubectl when available).
-3. If auto-restart fails, restart manually:
+- **Metric exporters** — sinks for OTLP metrics from the Python backend (remote OTLP, file, etc.).
+- **Log exporters** — sinks for logs received on syslog `:5140` and tcplog `:5141`.
 
-   | Environment | Command |
-   |-------------|---------|
-   | Ubuntu + Docker | `docker compose restart otel-collector` |
-   | Kubernetes | `./scripts/k8s-apply-collector-config.sh` (with backend port-forward active) |
+A Prometheus exporter on **:8889** is always included for optional local validation (in addition to exporters you enable).
+
+1. Add or enable exporters in each section.
+2. Click **Apply collector config** — writes `otel-collector/generated-config.yaml` and **restarts** the OpenTelemetry Collector (Docker Compose or `kubectl` when available).
+3. If restart fails, the UI shows a manual command. Set `COLLECTOR_AUTO_RESTART=false` to only write YAML without restarting.
 
 ### 4. Start export
 
@@ -179,54 +198,34 @@ Use **OpenTelemetry Collector exporters** to add sinks beyond the built-in Prome
 | **OTLP HTTP endpoint** | `http://127.0.0.1:4318` | Pre-filled: `http://otel-collector.bigip-telemetry.svc.cluster.local:4318` |
 | **Poll interval** | Seconds between full poll cycles (default 30) | Same |
 
-**Start export** polls every **checked** device × every selected endpoint, converts nested iControl stats to metric points, and pushes OTLP HTTP to the collector.
+**Start export** runs when at least one connected device is checked for export:
 
-Export status (and **Refresh status**) shows:
+- **Metrics** — polls selected `/mgmt/.../stats` endpoints and sends OTLP metrics to the collector.
+- **Logs** — traffic from enabled BIG-IP logging profiles and system syslog reaches the collector on ports **5140** / **5141** (if those features were configured on connect).
 
-- `running`, `bigip_count`, `bigip_hosts`
-- `last_point_count`, `last_errors_by_host` (per-device errors)
-- `poll_interval_sec`
+Export status (and **Refresh status**) shows `running`, device count, `last_point_count`, `last_errors_by_host`, and `poll_interval_sec`.
 
 **Stop export** ends the background loop.
 
 REST equivalent: `POST /api/export/start` with body `{ "session_ids": ["..."], "endpoints": [...], "poll_interval_sec": 30, "otlp_endpoint": "..." }`. Empty `session_ids` exports all connected devices.
 
-### 5. Validate in Prometheus
+### 5. Validate metrics (optional)
+
+Prometheus is included in the default Docker Compose stack. It scrapes the collector’s Prometheus exporter on **:8889**.
 
 | Link | Default URL |
 |------|-------------|
 | Prometheus UI | `http://<HOST-IP>:9090` |
-| Collector Prometheus exporter | `http://<HOST-IP>:8889/metrics` |
+| Collector metrics | `http://<HOST-IP>:8889/metrics` |
 
-1. **Status → Targets** — job `otel-collector` should be **UP**.
-2. Query examples:
+In Prometheus **Status → Targets**, job `otel-collector` should be **UP**. Example PromQL:
 
-   ```promql
-   bigip_tm_ltm_virtual_stats
-   ```
+```promql
+bigip_tm_sys_memory{bigip_host="10.0.0.50", bigip_stat="memoryused"}
+sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)
+```
 
-   With multiple BIG-IPs, filter by device (labels come from per-point metadata):
-
-   ```promql
-   bigip_tm_sys_memory{bigip_host="172.16.60.123", bigip_stat="memoryfree"}
-   ```
-
-   One metric family per iControl stats endpoint (e.g. `bigip_tm_sys_memory`), with labels:
-   - `bigip_host` — which BIG-IP
-   - `bigip_stat` — stat field (`memoryfree`, `memorytotal`, …)
-   - `bigip_object` — short object slot (e.g. `memory_host_0`), not the full selfLink URL
-
-   Compare devices: `sum by (bigip_host, bigip_stat) (bigip_tm_sys_memory)`
-
-3. **Reload Prometheus (wipe data)** — clears TSDB, then reloads scrape config (`--web.enable-lifecycle` is enabled in `docker-compose.yml`):
-   - **Docker Compose:** stop/remove/recreate the `prometheus` container (empty `/prometheus`).
-   - **Kubernetes** (with `kubectl` on the API host): `rollout restart` the Prometheus deployment (fresh `emptyDir`).
-   - **Otherwise** (e.g. in-cluster API): deletes all series via Prometheus admin API, then `POST /-/reload`.
-4. **Restart Prometheus** — recreates the container/pod without calling `/-/reload`.
-
-Set `PROMETHEUS_RELOAD_WIPE_TSDB=false` on the backend to reload **config only** and keep historical metrics. Custom wipe: `PROMETHEUS_RELOAD_WIPE_CMD`.
-
-On Ubuntu, restart uses the same recreate path as reload wipe. On Kubernetes, the API runs `kubectl rollout restart deployment/prometheus` in namespace `bigip-telemetry` when `kubectl` is available.
+Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bigip_object` contains rolling-average substrings are skipped by default (`BIGIP_EXCLUDE_OBJECT_PATTERNS`).
 
 ### Multi-BIG-IP behavior
 
@@ -251,18 +250,22 @@ On Ubuntu, restart uses the same recreate path as reload wipe. On Kubernetes, th
 | `POST` | `/api/export/start` | Start multi-device export |
 | `POST` | `/api/export/stop` | Stop export |
 | `GET` | `/api/export/status` | Loop status + connected devices |
+| `PATCH` | `/api/session/{session_id}/log-options` | Update log export toggles on a connected device |
 | `GET` | `/api/exporters/catalog` | Collector contrib exporter types and form fields |
-| `GET` / `POST` | `/api/collector/config` | Read/write collector YAML |
+| `GET` | `/api/collector/control` | Collector restart mode and hints |
+| `GET` / `POST` | `/api/collector/config` | Read/write collector YAML (POST restarts collector when enabled) |
 
 ### Common issues (user-facing)
 
 | Symptom | What to do |
 |---------|------------|
-| Cannot connect | Ping/curl management IP from the same host as the API; try **Verify TLS** off |
+| Cannot connect | Ping/curl management IP from the API host/pod; try **Verify TLS** off |
 | `401 Authentication failed` | Check user/password and REST permissions |
 | Token extension warning | Reconnect before long runs, or ignore if export is under ~20 min |
-| No metrics in Prometheus | Export running? Collector up? Correct OTLP URL for your environment |
-| Only one device in metrics | Confirm multiple devices checked; query with `bigip_host` label; verify labels in Prometheus **Metrics** explorer (see [Multi-BIG-IP behavior](#multi-bigip-behavior)) |
+| AS3 / log profile errors | Check `BIGIP_AS3_RPM_PATH`, module provisioning, and `BIGIP_LOG_SYSLOG_HOST` (must not be loopback) |
+| No metrics in Prometheus | Export running? Devices checked for metrics? Collector up? OTLP URL correct? |
+| Only one device in metrics | Confirm multiple devices checked; use `bigip_host` in PromQL |
+| Log options missing | Module not provisioned on BIG-IP (LTM/ASM/AFM/AVR toggles hidden) |
 | `{"detail":"Not Found"}` on `/` | Build UI: `cd frontend && npm ci && npm run build`, restart API |
 
 ## Installation options
@@ -311,8 +314,8 @@ curl -sk --connect-timeout 5 https://<BIG-IP-MGMT-IP>/mgmt/shared/ident | head -
 
 ```bash
 cd ~
-git clone https://github.com/gregcoward/BIG-IP-Metrics-Exporter.git
-cd BIG-IP-Metrics-Exporter
+git clone https://github.com/gregcoward/BIG-IP-Telemetry-Exporter.git
+cd BIG-IP-Telemetry-Exporter
 chmod +x scripts/*.sh
 ```
 
@@ -329,6 +332,8 @@ Verify containers are running:
 | Service | Port | Purpose |
 |---------|------|---------|
 | `otel-collector` | 4318 | OTLP HTTP (backend sends metrics here) |
+| `otel-collector` | 5140 | Syslog receiver (ASM/AFM security logs, system syslog) |
+| `otel-collector` | 5141 | tcplog receiver (LTM request/response logs via HSL) |
 | `otel-collector` | 8889 | Prometheus exporter (`/metrics`) |
 | `prometheus` | 9090 | Prometheus UI |
 
@@ -341,7 +346,7 @@ curl -s "http://${HOST_IP}:9090/-/ready"
 ### Step 3 — Install and run the Python backend
 
 ```bash
-cd ~/BIG-IP-Metrics-Exporter
+cd ~/BIG-IP-Telemetry-Exporter
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -370,7 +375,7 @@ curl -s http://127.0.0.1:8001/api/health
 The UI is **not** in git — you must build it once. In a **new terminal**:
 
 ```bash
-cd ~/BIG-IP-Metrics-Exporter/frontend
+cd ~/BIG-IP-Telemetry-Exporter/frontend
 npm ci
 npm run build
 ls -la dist/index.html   # must exist
@@ -392,18 +397,20 @@ echo "UI: http://${HOST_IP}:8001"
 Follow the **[User guide](#user-guide)**. Quick checklist:
 
 1. Open **`http://<HOST-IP>:8001`**.
-2. **BIG-IP connections** — fill host, username, and password, then **Connect**; use **Add BIG-IP** for more; confirm devices in the status bar and check which to export.
+2. **BIG-IP connections** — connect with **Export metrics** and/or **Export logs**; use per-device toggles for LTM/ASM/AFM/AVR and system syslog.
 3. **API endpoints** — select stats paths (defaults are pre-selected).
 4. **Collector exporters** (optional) → **Apply collector config** (auto-restarts collector).
 5. **Export** — OTLP `http://127.0.0.1:4318` → **Start export**.
-6. **Prometheus** — `http://<HOST-IP>:9090`, targets up, query `bigip_*` (use `bigip_host` label when multiple devices).
+6. **Validate** (optional) — Prometheus at `http://<HOST-IP>:9090`, query `bigip_*` (use `bigip_host` when multiple devices).
+
+For log export, ensure BIG-IP can reach this host on **5140** and **5141**. Set `BIGIP_LOG_SYSLOG_HOST` if auto-detection picks the wrong address.
 
 ### Optional — Development UI (Vite)
 
 Use this if you are changing the React code (hot reload). Requires the backend from Step 3.
 
 ```bash
-cd ~/BIG-IP-Metrics-Exporter/frontend
+cd ~/BIG-IP-Telemetry-Exporter/frontend
 npm run dev
 ```
 
@@ -416,6 +423,9 @@ If UFW is enabled, allow the ports you need:
 ```bash
 sudo ufw allow 8001/tcp comment 'BIG-IP Telemetry UI/API'
 sudo ufw allow 9090/tcp comment 'Prometheus'
+# Required for BIG-IP remote logging when exporting logs:
+sudo ufw allow 5140/tcp comment 'OTEL syslog receiver'
+sudo ufw allow 5141/tcp comment 'OTEL HSL tcplog receiver'
 # Only if remote hosts must scrape collector metrics directly:
 sudo ufw allow 8889/tcp comment 'OTEL Prometheus exporter'
 ```
@@ -428,7 +438,8 @@ sudo ufw allow 8889/tcp comment 'OTEL Prometheus exporter'
 | `401 Authentication failed` | Username/password; account not locked; user has iControl REST permission |
 | `Login failed` / TLS errors | Try with **Verify TLS** unchecked, or install the BIG-IP management CA on Ubuntu |
 | `Token extension failed` | Warning only — connection can still work (~20 min token); fix token PATCH if needed |
-| No metrics in Prometheus | Export started? Devices checked? `docker compose logs otel-collector`; OTLP `http://127.0.0.1:4318` |
+| No metrics in Prometheus | Export started? Devices checked for metrics? `docker compose logs otel-collector`; OTLP `http://127.0.0.1:4318` |
+| No logs in collector | BIG-IP can reach host on 5140/5141? `BIGIP_LOG_SYSLOG_HOST` not loopback? Profiles attached on virtual servers? |
 | Multiple devices, one host in queries | Use `bigip_host` label in PromQL; confirm all devices were checked before export |
 | `{"detail":"Not Found"}` on `/` | Run Step 4: `cd frontend && npm ci && npm run build`, restart API |
 | UI blank after build | `frontend/dist` exists; restart `python run_server.py` |
@@ -458,8 +469,9 @@ flowchart TB
     BE[Deployment bigip-telemetry-backend]
     OC[Deployment otel-collector]
     PR[Deployment prometheus]
-    BE -->|OTLP HTTP :4318| OC
-    PR -->|scrape :8889| OC
+  BE -->|OTLP HTTP :4318| OC
+  BE -->|syslog :5140 / tcplog :5141| OC
+  PR -->|scrape :8889| OC
   end
   BE --> BIGIP[BIG-IP management API]
   ING --> BE
@@ -482,8 +494,8 @@ flowchart TB
 ### Step 1 — Build the backend image
 
 ```bash
-git clone https://github.com/gregcoward/BIG-IP-Metrics-Exporter.git
-cd BIG-IP-Metrics-Exporter
+git clone https://github.com/gregcoward/BIG-IP-Telemetry-Exporter.git
+cd BIG-IP-Telemetry-Exporter
 chmod +x scripts/k8s-*.sh   # build, deploy, apply-collector-config, uninstall
 ./scripts/k8s-build-image.sh
 ```
@@ -542,15 +554,11 @@ kubectl -n bigip-telemetry port-forward --address 0.0.0.0 svc/prometheus 9090:90
 Follow the **[User guide](#user-guide)**. Kubernetes-specific checklist:
 
 1. Open **`http://<HOST-IP>:8001`** (port-forward `8001:8000`).
-2. Connect one or more BIG-IPs (**Add BIG-IP**); credentials stay in API memory, not Kubernetes Secrets by default.
-3. Select APIs; **Apply collector config** in the UI, then:
-
-   ```bash
-   ./scripts/k8s-apply-collector-config.sh
-   ```
-
+2. Connect with **Export metrics** and/or log options; use per-device LTM/ASM/AFM/AVR and system syslog toggles.
+3. Select APIs; configure **metric** and **log** collector exporters → **Apply collector config** (auto-restarts collector, or run `./scripts/k8s-apply-collector-config.sh`).
 4. **Start export** — OTLP endpoint should remain the in-cluster URL (`http://otel-collector.bigip-telemetry.svc.cluster.local:4318`).
-5. Validate at **`http://<HOST-IP>:9090`** (second port-forward).
+5. For log export, ensure BIG-IP can reach collector **5140** / **5141**; set `BIGIP_LOG_SYSLOG_HOST` on the backend if needed.
+6. Validate metrics (optional) at **`http://<HOST-IP>:9090`** (second port-forward).
 
 ### Step 5 — Uninstall
 
@@ -600,7 +608,8 @@ Do not deploy `minimal` without pushing an image — `bigip-telemetry-exporter:l
 |---------|----------------|
 | `ErrImagePull` / `authorization failed` | Image not on Docker Hub — use [`local` overlay](#step-2--deploy-the-stack) or push to your registry |
 | `401` / connect errors in UI | Pod network → BIG-IP management IP; TLS verify setting |
-| No metrics in Prometheus | Export started? Devices checked? `kubectl logs -n bigip-telemetry deploy/otel-collector` |
+| No metrics in Prometheus | Export started? Devices checked for metrics? `kubectl logs -n bigip-telemetry deploy/otel-collector` |
+| No logs in collector | BIG-IP → collector on 5140/5141? `BIGIP_LOG_SYSLOG_HOST`? Log exporters configured? |
 | Backend pod not ready | Probes hit port 8000 — image must set `PORT=8000` (included in `Dockerfile`) |
 | Port-forward only on localhost | Add `--address 0.0.0.0` (see Step 3) |
 
@@ -658,10 +667,7 @@ Catalog API: `GET /api/exporters/catalog` (categories, field schemas, links to [
 | `BIGIP_EXCLUDE_OBJECT_PATTERNS` | `fiveminavg,fivesecavg,oneminavge,oneminavg` | Comma-separated substrings; if `bigip_object` contains any, the metric is skipped |
 | `PORT` | `8001` (local), `8000` (Docker/K8s image) | API listen port |
 | `OTLP_HTTP_ENDPOINT` | `http://127.0.0.1:4318` | Default OTLP URL in UI (K8s manifest overrides) |
-| `PROMETHEUS_RELOAD_WIPE_TSDB` | `true` | When true, **Reload Prometheus** wipes TSDB before `/-/reload` |
-| `PROMETHEUS_RELOAD_WIPE_CMD` | *(unset)* | Custom shell command to wipe TSDB before reload |
-| `PROMETHEUS_RESTART_MODE` | `docker` / `kubernetes` / auto | How reload/restart recreates Prometheus |
-| `PROMETHEUS_K8S_NAMESPACE` | `bigip-telemetry` | Namespace for `kubectl rollout restart` |
+| `PROMETHEUS_UI_URL` | *(unset)* | Override Prometheus UI base URL for link generation |
 | `COLLECTOR_AUTO_RESTART` | `true` | Set `false` to write config without restarting the collector |
 | `COLLECTOR_RESTART_CMD` | _(unset)_ | Custom restart command (overrides auto-detect) |
 | `COLLECTOR_RESTART_MODE` | auto | `docker`, `kubernetes`, or `none` |
@@ -670,7 +676,7 @@ Catalog API: `GET /api/exporters/catalog` (categories, field schemas, links to [
 
 ## Repository
 
-https://github.com/gregcoward/BIG-IP-Metrics-Exporter
+https://github.com/gregcoward/BIG-IP-Telemetry-Exporter
 
 ## License
 
