@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -52,7 +53,7 @@ class OTLPMetricsPusher:
         count = 0
         for pt in points:
             name = pt["name"]
-            safe = name.replace(".", "_")[:100]
+            safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)[:255]
             if safe not in self._instruments:
                 host = pt.get("attributes", {}).get("bigip.host", "unknown")
                 self._instruments[safe] = self._meter.create_up_down_counter(

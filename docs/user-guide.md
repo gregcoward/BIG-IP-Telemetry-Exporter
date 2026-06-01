@@ -233,7 +233,7 @@ Empty `session_ids` exports **all** connected devices. To target specific device
 | API list devices | `GET /api/bigips` or `GET /api/devices` |
 | Connect | `POST /api/connect` with `export_metrics`, `export_logs`, and optional per-type flags |
 | Log options | `PATCH /api/session/{session_id}/log-options` |
-| Metric collision | One metric name per REST stats endpoint; separated by `bigip_host`, `bigip_stat`, `bigip_object` labels |
+| Metric collision | One metric name per stat field; separated by `bigip_host` and `bigip_object` labels |
 | Export scope (UI) | Checked devices only |
 | Export scope (API) | `session_ids` array; empty = all connected |
 | Provisioning | `prov_ltm`, `prov_asm`, `prov_afm`, `prov_avr` returned on connect; gates UI toggles |
