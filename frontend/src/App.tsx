@@ -102,6 +102,10 @@ type BigIPDevice = {
   export_asm_logs?: boolean;
   export_afm_logs?: boolean;
   export_avr_logs?: boolean;
+  prov_ltm?: boolean;
+  prov_asm?: boolean;
+  prov_afm?: boolean;
+  prov_avr?: boolean;
   connected_since?: number;
 };
 
@@ -179,10 +183,6 @@ export default function App() {
   const [verifyTls, setVerifyTls] = useState(false);
   const [connectExportMetrics, setConnectExportMetrics] = useState(true);
   const [connectExportLogs, setConnectExportLogs] = useState(true);
-  const [connectExportLtmLogs, setConnectExportLtmLogs] = useState(true);
-  const [connectExportAsmLogs, setConnectExportAsmLogs] = useState(true);
-  const [connectExportAfmLogs, setConnectExportAfmLogs] = useState(true);
-  const [connectExportAvrLogs, setConnectExportAvrLogs] = useState(true);
   const [connectExportSystemLogs, setConnectExportSystemLogs] = useState(false);
   const [devices, setDevices] = useState<BigIPDevice[]>([]);
   const [exportDeviceIds, setExportDeviceIds] = useState<Set<string>>(new Set());
@@ -326,10 +326,6 @@ export default function App() {
       connectExportMetrics,
       connectExportLogs,
       connectExportSystemLogs,
-      connectExportLtmLogs,
-      connectExportAsmLogs,
-      connectExportAfmLogs,
-      connectExportAvrLogs,
     ],
   );
 
@@ -356,10 +352,6 @@ export default function App() {
           export_metrics: connectExportMetrics,
           export_logs: connectExportLogs,
           export_system_logs: connectExportSystemLogs,
-          export_ltm_logs: connectExportLtmLogs,
-          export_asm_logs: connectExportAsmLogs,
-          export_afm_logs: connectExportAfmLogs,
-          export_avr_logs: connectExportAvrLogs,
         }),
       });
       const data = await readJson<{
@@ -391,10 +383,6 @@ export default function App() {
     connectExportMetrics,
     connectExportLogs,
     connectExportSystemLogs,
-    connectExportLtmLogs,
-    connectExportAsmLogs,
-    connectExportAfmLogs,
-    connectExportAvrLogs,
     refreshDevices,
   ]);
 
@@ -412,6 +400,32 @@ export default function App() {
           next.delete(sessionId);
           return next;
         });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshDevices],
+  );
+
+  const updateDeviceLogOptions = useCallback(
+    async (
+      sessionId: string,
+      patch: Partial<Pick<
+        BigIPDevice,
+        "export_system_logs" | "export_ltm_logs" | "export_asm_logs" | "export_afm_logs" | "export_avr_logs"
+      >>,
+    ) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await apiFetch(`/api/session/${encodeURIComponent(sessionId)}/log-options`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        await refreshDevices();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -960,6 +974,74 @@ export default function App() {
                   </span>
                 </label>
                 {d.warning && <span className="device-list-warn">{d.warning}</span>}
+                <div className="device-list-options">
+                  {(d.prov_ltm || d.prov_asm || d.prov_afm || d.prov_avr) && (
+                    <div className="device-list-options-row">
+                      <span className="muted">Logs</span>
+                      {d.prov_ltm && (
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={d.export_ltm_logs !== false}
+                            onChange={(e) =>
+                              void updateDeviceLogOptions(d.session_id, { export_ltm_logs: e.target.checked })
+                            }
+                          />
+                          LTM
+                        </label>
+                      )}
+                      {d.prov_asm && (
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={d.export_asm_logs !== false}
+                            onChange={(e) =>
+                              void updateDeviceLogOptions(d.session_id, { export_asm_logs: e.target.checked })
+                            }
+                          />
+                          ASM
+                        </label>
+                      )}
+                      {d.prov_afm && (
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={d.export_afm_logs !== false}
+                            onChange={(e) =>
+                              void updateDeviceLogOptions(d.session_id, { export_afm_logs: e.target.checked })
+                            }
+                          />
+                          AFM
+                        </label>
+                      )}
+                      {d.prov_avr && (
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={d.export_avr_logs !== false}
+                            onChange={(e) =>
+                              void updateDeviceLogOptions(d.session_id, { export_avr_logs: e.target.checked })
+                            }
+                          />
+                          AVR
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  <div className="device-list-options-row">
+                    <span className="muted">System</span>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(d.export_system_logs)}
+                        onChange={(e) =>
+                          void updateDeviceLogOptions(d.session_id, { export_system_logs: e.target.checked })
+                        }
+                      />
+                      syslog
+                    </label>
+                  </div>
+                </div>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
@@ -1018,42 +1100,6 @@ export default function App() {
             />
             Export logs (remote syslog/HSL profiles)
           </label>
-          {connectExportLogs && (
-            <div className="connect-export-suboptions">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={connectExportLtmLogs}
-                  onChange={(e) => setConnectExportLtmLogs(e.target.checked)}
-                />
-                LTM request logs
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={connectExportAsmLogs}
-                  onChange={(e) => setConnectExportAsmLogs(e.target.checked)}
-                />
-                ASM security logs
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={connectExportAfmLogs}
-                  onChange={(e) => setConnectExportAfmLogs(e.target.checked)}
-                />
-                AFM security logs
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={connectExportAvrLogs}
-                  onChange={(e) => setConnectExportAvrLogs(e.target.checked)}
-                />
-                AVR analytics profiles
-              </label>
-            </div>
-          )}
           <label className="check">
             <input
               type="checkbox"

@@ -276,6 +276,20 @@ a:hover {
   padding-left: 0.25rem;
 }
 
+.device-list-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.device-list-options-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
 .api-table-wrap {
   max-height: 280px;
   overflow: auto;

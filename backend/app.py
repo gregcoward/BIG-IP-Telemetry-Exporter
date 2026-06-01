@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from backend.bigip_client import BigIPClient, BigIPError
 from backend.as3_log_profiles import ensure_log_profiles_via_as3
+from backend.module_provision import is_module_provisioned
 from backend.collector_config import (
     CONTRIB_EXPORTERS_REPO,
     EXPORTER_TYPES,
@@ -94,6 +95,10 @@ class _Session:
     export_asm_logs: bool = True
     export_afm_logs: bool = True
     export_avr_logs: bool = True
+    prov_ltm: bool = True
+    prov_asm: bool = False
+    prov_afm: bool = False
+    prov_avr: bool = False
 
 
 _sessions: dict[str, _Session] = {}
@@ -180,6 +185,10 @@ def _session_to_dict(session_id: str, sess: _Session) -> dict[str, Any]:
         "export_asm_logs": sess.export_asm_logs,
         "export_afm_logs": sess.export_afm_logs,
         "export_avr_logs": sess.export_avr_logs,
+        "prov_ltm": sess.prov_ltm,
+        "prov_asm": sess.prov_asm,
+        "prov_afm": sess.prov_afm,
+        "prov_avr": sess.prov_avr,
         "connected_since": sess.created,
     }
 
@@ -256,6 +265,10 @@ class ConnectResponse(BaseModel):
     export_asm_logs: bool = True
     export_afm_logs: bool = True
     export_avr_logs: bool = True
+    prov_ltm: bool = True
+    prov_asm: bool = False
+    prov_afm: bool = False
+    prov_avr: bool = False
 
 
 class ExporterItem(BaseModel):
@@ -300,6 +313,14 @@ class ProbeBody(BaseModel):
 
 
 app = FastAPI(title="BIG-IP Telemetry Exporter", version="1.0.0")
+
+
+class LogOptionsBody(BaseModel):
+    export_system_logs: bool | None = None
+    export_ltm_logs: bool | None = None
+    export_asm_logs: bool | None = None
+    export_afm_logs: bool | None = None
+    export_avr_logs: bool | None = None
 
 
 @app.exception_handler(Exception)
@@ -435,6 +456,20 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
         log_syslog_target: str | None = None
         log_hsl_target: str | None = None
         system_syslog_target: str | None = None
+        prov_ltm = False
+        prov_asm = False
+        prov_afm = False
+        prov_avr = False
+        try:
+            prov_ltm = is_module_provisioned(client, "ltm")
+            prov_asm = is_module_provisioned(client, "asm")
+            prov_afm = is_module_provisioned(client, "afm")
+            prov_avr = is_module_provisioned(client, "avr")
+        except BigIPError as exc:
+            warning = _append_warning(
+                warning,
+                f"Connected, but could not read module provisioning ({exc}).",
+            )
         if body.export_system_logs:
             try:
                 log_host = resolve_syslog_host(browser_host=_browser_host(request))
@@ -517,6 +552,10 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             export_asm_logs=body.export_asm_logs,
             export_afm_logs=body.export_afm_logs,
             export_avr_logs=body.export_avr_logs,
+            prov_ltm=prov_ltm,
+            prov_asm=prov_asm,
+            prov_afm=prov_afm,
+            prov_avr=prov_avr,
         )
         return ConnectResponse(
             session_id=sid,
@@ -542,6 +581,10 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             export_asm_logs=body.export_asm_logs,
             export_afm_logs=body.export_afm_logs,
             export_avr_logs=body.export_avr_logs,
+            prov_ltm=prov_ltm,
+            prov_asm=prov_asm,
+            prov_afm=prov_afm,
+            prov_avr=prov_avr,
         )
     except HTTPException:
         raise
@@ -562,6 +605,72 @@ def disconnect(session_id: str) -> dict[str, bool]:
         except Exception:
             pass
     return {"ok": True}
+
+
+@app.patch("/api/session/{session_id}/log-options")
+def update_log_options(session_id: str, body: LogOptionsBody, request: Request) -> dict[str, Any]:
+    s = _get_session(session_id)
+
+    # Validate enables against provisioning; always allow disabling.
+    def _set(name: str, value: bool | None) -> None:
+        if value is None:
+            return
+        setattr(s, name, bool(value))
+
+    if body.export_ltm_logs is True and not s.prov_ltm:
+        raise HTTPException(status_code=400, detail="LTM is not provisioned on this BIG-IP.")
+    if body.export_asm_logs is True and not s.prov_asm:
+        raise HTTPException(status_code=400, detail="ASM is not provisioned on this BIG-IP.")
+    if body.export_afm_logs is True and not s.prov_afm:
+        raise HTTPException(status_code=400, detail="AFM is not provisioned on this BIG-IP.")
+    if body.export_avr_logs is True and not s.prov_avr:
+        raise HTTPException(status_code=400, detail="AVR is not provisioned on this BIG-IP.")
+
+    _set("export_system_logs", body.export_system_logs)
+    _set("export_ltm_logs", body.export_ltm_logs)
+    _set("export_asm_logs", body.export_asm_logs)
+    _set("export_afm_logs", body.export_afm_logs)
+    _set("export_avr_logs", body.export_avr_logs)
+
+    # Derived compatibility umbrella.
+    s.export_logs = bool(s.export_ltm_logs or s.export_asm_logs or s.export_afm_logs or s.export_avr_logs)
+
+    warning: str | None = None
+    # Apply system syslog forwarding if enabled.
+    if s.export_system_logs:
+        try:
+            log_host = resolve_syslog_host(browser_host=_browser_host(request))
+            ensure_system_syslog_forwarding(s.client, host=log_host, port=5140)
+            s.system_syslog_target = f"{log_host}:5140"
+        except (ValueError, BigIPError) as exc:
+            warning = _append_warning(warning, f"System log forwarding update failed ({exc}).")
+
+    # Apply AS3 profiles as requested.
+    if s.export_logs:
+        try:
+            log_host = resolve_syslog_host(browser_host=_browser_host(request))
+            profiles = ensure_log_profiles_via_as3(
+                s.client,
+                log_host=log_host,
+                include_ltm=s.export_ltm_logs,
+                include_asm=s.export_asm_logs,
+                include_afm=s.export_afm_logs,
+                include_avr=s.export_avr_logs,
+            )
+            s.request_log_profile = profiles.request_log_profile
+            s.asm_log_profile = profiles.asm_log_profile
+            s.afm_log_profile = profiles.afm_log_profile
+            s.http_analytics_profile = profiles.http_analytics_profile
+            s.tcp_analytics_profile = profiles.tcp_analytics_profile
+            s.log_syslog_target = profiles.log_syslog_target
+            s.log_hsl_target = profiles.log_hsl_target
+        except (ValueError, BigIPError) as exc:
+            warning = _append_warning(warning, f"AS3 profile update failed ({exc}).")
+
+    if warning:
+        s.warning = _append_warning(s.warning, warning)
+
+    return {"ok": True, "device": _session_to_dict(session_id, s)}
 
 
 @app.post("/api/probe")
