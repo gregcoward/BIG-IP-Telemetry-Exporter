@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 import traceback
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,14 @@ from backend.collector_ops import auto_restart_enabled, control_status as collec
 from backend.log_forwarding import resolve_syslog_host, runtime_log_config
 from backend.metrics_extractor import extract_metrics
 from backend.otel_export import MetricsExportLoop, OTLPMetricsPusher
+from backend.session_store import (
+    load_store,
+    persist_enabled,
+    save_store,
+    session_record_from_dict,
+    store_path,
+    stored_credentials,
+)
 from backend.system_syslog import ensure_system_syslog_forwarding
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +56,7 @@ DEFAULT_OTLP_ENDPOINT = os.environ.get(
     "OTLP_HTTP_ENDPOINT",
     "http://127.0.0.1:4318",
 )
-SESSION_TTL_SEC = 45 * 60
+SESSION_TTL_SEC = int(os.environ.get("BIGIP_SESSION_TTL_SEC", str(45 * 60)))
 
 
 def _browser_host(request: Request) -> str:
@@ -73,6 +82,9 @@ class _Session:
     host: str
     label: str
     created: float
+    username: str = ""
+    password: str = ""
+    verify_tls: bool = False
     token_timeout_sec: int = 1200
     warning: str | None = None
     request_log_profile: str | None = None
@@ -109,9 +121,61 @@ _collector_metric_exporters: list[dict[str, Any]] = []
 _collector_log_exporters: list[dict[str, Any]] = []
 _collector_export_metrics: bool = True
 _collector_export_logs: bool = True
+_export_config: dict[str, Any] | None = None
+
+
+def _session_persist_payload(session_id: str, sess: _Session) -> dict[str, Any]:
+    return session_record_from_dict(
+        session_id,
+        {
+            "host": sess.host,
+            "username": sess.username,
+            "password": sess.password,
+            "verify_tls": sess.verify_tls,
+            "label": sess.label,
+            "created": sess.created,
+            "token_timeout_sec": sess.token_timeout_sec,
+            "warning": sess.warning,
+            "request_log_profile": sess.request_log_profile,
+            "request_log_profile_created": sess.request_log_profile_created,
+            "asm_log_profile": sess.asm_log_profile,
+            "asm_log_profile_created": sess.asm_log_profile_created,
+            "afm_log_profile": sess.afm_log_profile,
+            "afm_log_profile_created": sess.afm_log_profile_created,
+            "http_analytics_profile": sess.http_analytics_profile,
+            "http_analytics_profile_created": sess.http_analytics_profile_created,
+            "tcp_analytics_profile": sess.tcp_analytics_profile,
+            "tcp_analytics_profile_created": sess.tcp_analytics_profile_created,
+            "log_syslog_target": sess.log_syslog_target,
+            "log_hsl_target": sess.log_hsl_target,
+            "system_syslog_target": sess.system_syslog_target,
+            "export_metrics": sess.export_metrics,
+            "export_logs": sess.export_logs,
+            "export_system_logs": sess.export_system_logs,
+            "export_ltm_logs": sess.export_ltm_logs,
+            "export_asm_logs": sess.export_asm_logs,
+            "export_afm_logs": sess.export_afm_logs,
+            "export_avr_logs": sess.export_avr_logs,
+            "prov_ltm": sess.prov_ltm,
+            "prov_asm": sess.prov_asm,
+            "prov_afm": sess.prov_afm,
+            "prov_avr": sess.prov_avr,
+        },
+    )
+
+
+def _persist_runtime_state() -> None:
+    if not persist_enabled():
+        return
+    records = [
+        _session_persist_payload(sid, sess) for sid, sess in _sessions.items()
+    ]
+    save_store(records, _export_config)
 
 
 def _gc_sessions() -> None:
+    if persist_enabled():
+        return
     now = time.time()
     for sid, s in list(_sessions.items()):
         if now - s.created > SESSION_TTL_SEC:
@@ -120,6 +184,128 @@ def _gc_sessions() -> None:
             except Exception:
                 pass
             _sessions.pop(sid, None)
+    _persist_runtime_state()
+
+
+def _login_client(host: str, username: str, password: str, *, verify_tls: bool) -> tuple[BigIPClient, int, str | None]:
+    client = BigIPClient(host, username, password, verify_tls=verify_tls)
+    client.login()
+    warning: str | None = None
+    token_timeout_sec = 1200
+    try:
+        client.extend_token()
+        token_timeout_sec = 3600
+    except BigIPError as exc:
+        warning = (
+            f"Connected, but could not extend auth token ({exc}). "
+            "Long export runs may need to reconnect if the session expires."
+        )
+    return client, token_timeout_sec, warning
+
+
+def _session_from_record(record: dict[str, Any]) -> _Session:
+    host, username, password, verify_tls = stored_credentials(record)
+    client, token_timeout_sec, login_warning = _login_client(
+        host,
+        username,
+        password,
+        verify_tls=verify_tls,
+    )
+    warning = record.get("warning")
+    if login_warning:
+        warning = _append_warning(
+            str(warning) if warning else None,
+            login_warning,
+        )
+    label = (record.get("label") or "").strip() or _display_host(host)
+    return _Session(
+        client=client,
+        host=_normalize_host(host),
+        label=label,
+        created=float(record.get("created") or time.time()),
+        username=username,
+        password=password,
+        verify_tls=verify_tls,
+        token_timeout_sec=token_timeout_sec,
+        warning=warning if isinstance(warning, str) else None,
+        request_log_profile=record.get("request_log_profile"),
+        request_log_profile_created=record.get("request_log_profile_created"),
+        asm_log_profile=record.get("asm_log_profile"),
+        asm_log_profile_created=record.get("asm_log_profile_created"),
+        afm_log_profile=record.get("afm_log_profile"),
+        afm_log_profile_created=record.get("afm_log_profile_created"),
+        http_analytics_profile=record.get("http_analytics_profile"),
+        http_analytics_profile_created=record.get("http_analytics_profile_created"),
+        tcp_analytics_profile=record.get("tcp_analytics_profile"),
+        tcp_analytics_profile_created=record.get("tcp_analytics_profile_created"),
+        log_syslog_target=record.get("log_syslog_target"),
+        log_hsl_target=record.get("log_hsl_target"),
+        system_syslog_target=record.get("system_syslog_target"),
+        export_metrics=bool(record.get("export_metrics", True)),
+        export_logs=bool(record.get("export_logs", True)),
+        export_system_logs=bool(record.get("export_system_logs", False)),
+        export_ltm_logs=bool(record.get("export_ltm_logs", True)),
+        export_asm_logs=bool(record.get("export_asm_logs", True)),
+        export_afm_logs=bool(record.get("export_afm_logs", True)),
+        export_avr_logs=bool(record.get("export_avr_logs", True)),
+        prov_ltm=bool(record.get("prov_ltm", True)),
+        prov_asm=bool(record.get("prov_asm", False)),
+        prov_afm=bool(record.get("prov_afm", False)),
+        prov_avr=bool(record.get("prov_avr", False)),
+    )
+
+
+def _restore_runtime_state() -> None:
+    global _export_config, _export_loop, _pusher, _log_export
+    records, export_state = load_store()
+    if not records and not export_state:
+        return
+    restored = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        session_id = str(record.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        try:
+            _sessions[session_id] = _session_from_record(record)
+            restored += 1
+        except (BigIPError, ValueError) as exc:
+            logger.warning(
+                "Could not restore BIG-IP session %s (%s): %s",
+                session_id,
+                record.get("host"),
+                exc,
+            )
+    if restored:
+        logger.info("Restored %d BIG-IP session(s) from %s", restored, store_path())
+    if export_state and export_state.get("active"):
+        _export_config = export_state
+        session_ids = [
+            sid for sid in export_state.get("session_ids") or [] if sid in _sessions
+        ]
+        if not session_ids and _sessions:
+            session_ids = list(_sessions.keys())
+        if session_ids:
+            try:
+                _start_export(
+                    ExportStartBody(
+                        session_ids=session_ids,
+                        endpoints=list(export_state.get("endpoints") or []),
+                        metrics_only=bool(export_state.get("metrics_only", True)),
+                        modules=list(export_state.get("modules") or []),
+                        poll_interval_sec=float(export_state.get("poll_interval_sec", 30)),
+                        otlp_endpoint=str(
+                            export_state.get("otlp_endpoint") or DEFAULT_OTLP_ENDPOINT
+                        ),
+                    )
+                )
+                logger.info("Resumed metrics/log export from persisted state")
+            except HTTPException as exc:
+                logger.warning("Could not resume export: %s", exc.detail)
+        else:
+            _export_config = {**export_state, "active": False}
+            _persist_runtime_state()
 
 
 def _normalize_host(host: str) -> str:
@@ -310,7 +496,13 @@ class ProbeBody(BaseModel):
     session_id: str = ""
 
 
-app = FastAPI(title="BIG-IP Telemetry Exporter", version="1.0.0")
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    _restore_runtime_state()
+    yield
+
+
+app = FastAPI(title="BIG-IP Telemetry Exporter", version="1.0.0", lifespan=_app_lifespan)
 
 
 class LogOptionsBody(BaseModel):
@@ -416,28 +608,16 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             except Exception:
                 pass
 
-        client = BigIPClient(
-            body.host,
-            body.username,
-            body.password,
-            verify_tls=body.verify_tls,
-        )
         try:
-            client.login()
+            client, token_timeout_sec, login_warning = _login_client(
+                body.host,
+                body.username,
+                body.password,
+                verify_tls=body.verify_tls,
+            )
         except BigIPError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        warning: str | None = None
-        token_timeout_sec = 1200
-        try:
-            client.extend_token()
-            token_timeout_sec = 3600
-        except BigIPError as exc:
-            warning = _append_warning(
-                None,
-                f"Connected, but could not extend auth token ({exc}). "
-                "Long export runs may need to reconnect if the session expires.",
-            )
+        warning: str | None = login_warning
 
         request_log_profile: str | None = None
         request_log_profile_created: bool | None = None
@@ -518,6 +698,9 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             host=host_norm,
             label=label,
             created=time.time(),
+            username=body.username,
+            password=body.password,
+            verify_tls=body.verify_tls,
             token_timeout_sec=token_timeout_sec,
             warning=warning,
             request_log_profile=request_log_profile,
@@ -545,6 +728,7 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             prov_afm=prov_afm,
             prov_avr=prov_avr,
         )
+        _persist_runtime_state()
         return ConnectResponse(
             session_id=sid,
             host=host_norm,
@@ -592,6 +776,7 @@ def disconnect(session_id: str) -> dict[str, bool]:
             s.client.logout()
         except Exception:
             pass
+    _persist_runtime_state()
     return {"ok": True}
 
 
@@ -657,6 +842,7 @@ def update_log_options(session_id: str, body: LogOptionsBody, request: Request) 
     if warning:
         s.warning = _append_warning(s.warning, warning)
 
+    _persist_runtime_state()
     return {"ok": True, "device": _session_to_dict(session_id, s)}
 
 
@@ -797,6 +983,7 @@ def export_status() -> dict[str, Any]:
         "loop": _export_loop.status if _export_loop else {"running": False},
         "log_forwarding": _log_export,
         "otlp_endpoint": getattr(_pusher, "_endpoint", None) if _pusher else None,
+        "export_config": _export_config,
         "connected_devices": [
             _session_to_dict(sid, s) for sid, s in _sessions.items()
         ],
@@ -833,10 +1020,11 @@ def _resolve_export_sessions(
     return metrics_clients, log_hosts
 
 
-@app.post("/api/export/start")
-def export_start(body: ExportStartBody) -> dict[str, Any]:
-    global _export_loop, _pusher, _log_export
+def _start_export(body: ExportStartBody) -> dict[str, Any]:
+    global _export_loop, _pusher, _log_export, _export_config
     metrics_clients, log_hosts = _resolve_export_sessions(body.session_ids)
+    resolved_session_ids = body.session_ids if body.session_ids else list(_sessions.keys())
+    endpoints_used: list[str] = []
 
     log_cfg = runtime_log_config()
     _log_export = {
@@ -874,6 +1062,7 @@ def export_start(body: ExportStartBody) -> dict[str, Any]:
             endpoints = [r["endpoint"] for r in rows]
         if not endpoints:
             raise HTTPException(status_code=400, detail="No endpoints selected")
+        endpoints_used = endpoints
 
         if _export_loop and _export_loop.status.get("running"):
             _export_loop.stop()
@@ -906,12 +1095,27 @@ def export_start(body: ExportStartBody) -> dict[str, Any]:
         _pusher = None
         response["mode"] = "logs_only"
 
+    _export_config = {
+        "active": True,
+        "session_ids": resolved_session_ids,
+        "endpoints": endpoints_used,
+        "metrics_only": body.metrics_only,
+        "modules": list(body.modules),
+        "poll_interval_sec": body.poll_interval_sec,
+        "otlp_endpoint": body.otlp_endpoint.rstrip("/"),
+    }
+    _persist_runtime_state()
     return response
+
+
+@app.post("/api/export/start")
+def export_start(body: ExportStartBody) -> dict[str, Any]:
+    return _start_export(body)
 
 
 @app.post("/api/export/stop")
 def export_stop() -> dict[str, Any]:
-    global _export_loop, _pusher, _log_export
+    global _export_loop, _pusher, _log_export, _export_config
     if _export_loop:
         _export_loop.stop()
     if _pusher:
@@ -924,6 +1128,11 @@ def export_stop() -> dict[str, Any]:
         "syslog_target": None,
         "hsl_target": None,
     }
+    if _export_config:
+        _export_config = {**_export_config, "active": False}
+    else:
+        _export_config = {"active": False}
+    _persist_runtime_state()
     return {"stopped": True}
 
 

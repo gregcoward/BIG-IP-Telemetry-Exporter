@@ -142,7 +142,17 @@ Use **`PATCH /api/session/{session_id}/log-options`** to change log types on a c
 
 **Log reachability:** BIG-IP must reach the collector host on **5140** and **5141**. The backend auto-detects a LAN IP for remote log pools; set `BIGIP_LOG_SYSLOG_HOST` if auto-detection fails. Do **not** use `127.0.0.1` — BIG-IP rejects loopback destinations.
 
-Credentials stay in the API process memory (not written to disk by default). Restarting the backend clears all sessions.
+Credentials are stored in memory. By default they are also written to an **encrypted local session file** so connected devices and export state survive browser refresh and backend restart.
+
+| Environment variable | Default | Purpose |
+|---------------------|---------|---------|
+| `BIGIP_SESSION_PERSIST` | `true` | Set `false` to keep sessions in memory only (45 min TTL) |
+| `BIGIP_SESSION_STORE_PATH` | `~/.config/bigip-telemetry-exporter/sessions.json` | Session + export state file |
+| `BIGIP_SESSION_ENCRYPTION_KEY` | _(auto)_ | Fernet key for encrypting stored passwords |
+| `BIGIP_SESSION_KEY_FILE` | `{store}.key` | File for auto-generated encryption key when env key unset |
+| `BIGIP_SESSION_TTL_SEC` | `2700` | In-memory session TTL when persistence is disabled |
+
+Treat the session store like a secrets file: restrict filesystem permissions and disable persistence (`BIGIP_SESSION_PERSIST=false`) on shared admin hosts if you prefer not to retain passwords on disk.
 
 | Environment variable | Default | Purpose |
 |---------------------|---------|---------|

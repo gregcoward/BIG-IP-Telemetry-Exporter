@@ -112,7 +112,7 @@ BIG-IP sends remote logs to an IP the backend resolves at connect time (auto-det
 
 ### Security note
 
-Credentials are held in the API process memory for active sessions. They are not stored in Kubernetes Secrets or on disk by default. Restarting the backend pod/process clears all sessions.
+Credentials are held in the API process memory for active sessions. By default they are also written to an **encrypted local session file** (`~/.config/bigip-telemetry-exporter/sessions.json`) so connected devices and export state survive browser refresh and backend restart. Set `BIGIP_SESSION_PERSIST=false` for memory-only sessions (45 min TTL). Treat the session store like a secrets file on shared admin hosts.
 
 ## 2. Select API endpoints
 

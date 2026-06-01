@@ -239,6 +239,44 @@ export default function App() {
     });
   }, []);
 
+  const refreshStatus = useCallback(async () => {
+    await refreshDevices();
+    const r = await apiFetch("/api/export/status");
+    const data = await readJson<{
+      loop: Record<string, unknown>;
+      log_forwarding?: Record<string, unknown>;
+      connected_devices?: BigIPDevice[];
+      export_config?: {
+        active?: boolean;
+        session_ids?: string[];
+        endpoints?: string[];
+        metrics_only?: boolean;
+        modules?: string[];
+        poll_interval_sec?: number;
+        otlp_endpoint?: string;
+      };
+      otlp_endpoint?: string | null;
+    }>(r);
+    setExportStatus({
+      ...data.loop,
+      log_forwarding: data.log_forwarding,
+    });
+    if (data.connected_devices?.length !== undefined) {
+      setDevices(data.connected_devices);
+    }
+    const cfg = data.export_config;
+    if (cfg) {
+      if (cfg.otlp_endpoint) setOtlpEndpoint(cfg.otlp_endpoint);
+      else if (data.otlp_endpoint) setOtlpEndpoint(data.otlp_endpoint);
+      if (cfg.poll_interval_sec) setPollInterval(cfg.poll_interval_sec);
+      if (cfg.endpoints?.length) setSelectedEndpoints(new Set(cfg.endpoints));
+      if (cfg.session_ids?.length) setExportDeviceIds(new Set(cfg.session_ids));
+      if (cfg.modules?.length === 1) setModuleFilter(cfg.modules[0]);
+      else if (cfg.modules?.length === 0) setModuleFilter("");
+      if (cfg.metrics_only !== undefined) setMetricsOnly(cfg.metrics_only);
+    }
+  }, [refreshDevices]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -269,12 +307,12 @@ export default function App() {
           .filter((a) => a.collect_metrics === "true")
           .map((a) => a.endpoint);
         setSelectedEndpoints(new Set(defaults));
-        await refreshDevices();
+        await refreshStatus();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [refreshDevices]);
+  }, [refreshStatus]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -590,23 +628,6 @@ export default function App() {
       setBusy(false);
     }
   }, []);
-
-  const refreshStatus = useCallback(async () => {
-    await refreshDevices();
-    const r = await apiFetch("/api/export/status");
-    const data = await readJson<{
-      loop: Record<string, unknown>;
-      log_forwarding?: Record<string, unknown>;
-      connected_devices?: BigIPDevice[];
-    }>(r);
-    setExportStatus({
-      ...data.loop,
-      log_forwarding: data.log_forwarding,
-    });
-    if (data.connected_devices?.length !== undefined) {
-      setDevices(data.connected_devices);
-    }
-  }, [refreshDevices]);
 
   const toggleEndpoint = (ep: string) => {
     setSelectedEndpoints((prev) => {
@@ -1322,6 +1343,9 @@ export default function App() {
             />
           </div>
         </div>
+        {exportStatus?.running === true && (
+          <p className="muted">Metrics export is running in the background.</p>
+        )}
         <div className="actions">
           <button type="button" className="btn btn-primary" onClick={() => void startExport()}>
             Start export
