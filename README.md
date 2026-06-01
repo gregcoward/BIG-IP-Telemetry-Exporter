@@ -167,6 +167,10 @@ Credentials stay in the API process memory (not written to disk by default). Res
 | `BIGIP_AS3_RELEASE_VERSION` | `latest` | GitHub release tag (e.g. `v3.56.0`) or `latest` |
 | `BIGIP_AS3_DOWNLOAD_CACHE_DIR` | `~/.cache/bigip-telemetry-exporter/as3-rpms` | Cache directory for downloaded AS3 RPMs |
 | `BIGIP_AS3_GITHUB_REPO` | `F5Networks/f5-appsvcs-extension` | GitHub repo for AS3 release downloads |
+| `BIGIP_AS3_INSTALL_TIMEOUT_SEC` | `600` | Max wait for package-management INSTALL task |
+| `BIGIP_AS3_READY_TIMEOUT_SEC` | `180` | Max wait for `/mgmt/shared/appsvcs/info` after install |
+| `BIGIP_AS3_READY_POLL_SEC` | `2` | Poll interval while waiting for AS3 `/info` |
+| `BIGIP_AS3_RESTART_RESTNODED_AFTER_SEC` | `45` | Restart `restnoded` once if `/info` is still down |
 | `BIGIP_AS3_SCHEMA_VERSION` | `3.49.0` | AS3 declaration `schemaVersion` when `/info` is unavailable |
 
 ### 2. Select API endpoints
@@ -266,7 +270,7 @@ Labels include `bigip_host`, `bigip_stat`, and `bigip_object`. Metrics whose `bi
 | Cannot connect | Ping/curl management IP from the API host/pod; try **Verify TLS** off |
 | `401 Authentication failed` | Check user/password and REST permissions |
 | Token extension warning | Reconnect before long runs, or ignore if export is under ~20 min |
-| AS3 / log profile errors | Check `BIGIP_AS3_RPM_PATH`, module provisioning, and `BIGIP_LOG_SYSLOG_HOST` (must not be loopback) |
+| AS3 / profile errors | Use **admin** account for AS3 install; allow up to 180s for `/info`; check `BIGIP_AS3_RPM_PATH`, provisioning, and `BIGIP_LOG_SYSLOG_HOST` (not loopback) |
 | No metrics in Prometheus | Export running? Devices checked for metrics? Collector up? OTLP URL correct? |
 | Only one device in metrics | Confirm multiple devices checked; use `bigip_host` in PromQL |
 | Log options missing | Module not provisioned on BIG-IP (LTM/ASM/AFM/AVR toggles hidden) |

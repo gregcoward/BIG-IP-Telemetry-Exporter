@@ -23,6 +23,9 @@ PACKAGE_TASKS_PATH = "/mgmt/shared/iapp/package-management-tasks"
 DEFAULT_SCHEMA_VERSION = "3.49.0"
 DEFAULT_INSTALL_TIMEOUT_SEC = 600
 DEFAULT_PACKAGE_POLL_SEC = 2.0
+DEFAULT_AS3_READY_TIMEOUT_SEC = 180
+DEFAULT_AS3_READY_POLL_SEC = 2.0
+DEFAULT_AS3_RESTART_RESTNODED_AFTER_SEC = 45
 DEFAULT_GITHUB_REPO = "F5Networks/f5-appsvcs-extension"
 DEFAULT_DOWNLOAD_CACHE_DIR = Path.home() / ".cache" / "bigip-telemetry-exporter" / "as3-rpms"
 RPM_NAME_RE = re.compile(r"^f5-appsvcs-.*\.noarch\.rpm$")
@@ -47,6 +50,24 @@ def _auto_install_enabled() -> bool:
 def _install_timeout_sec() -> int:
     raw = os.environ.get("BIGIP_AS3_INSTALL_TIMEOUT_SEC", str(DEFAULT_INSTALL_TIMEOUT_SEC)).strip()
     return int(raw)
+
+
+def _as3_ready_timeout_sec() -> int:
+    raw = os.environ.get("BIGIP_AS3_READY_TIMEOUT_SEC", str(DEFAULT_AS3_READY_TIMEOUT_SEC)).strip()
+    return int(raw)
+
+
+def _as3_ready_poll_sec() -> float:
+    raw = os.environ.get("BIGIP_AS3_READY_POLL_SEC", str(DEFAULT_AS3_READY_POLL_SEC)).strip()
+    return float(raw)
+
+
+def _as3_restart_restnoded_after_sec() -> float:
+    raw = os.environ.get(
+        "BIGIP_AS3_RESTART_RESTNODED_AFTER_SEC",
+        str(DEFAULT_AS3_RESTART_RESTNODED_AFTER_SEC),
+    ).strip()
+    return float(raw)
 
 
 def _github_repo() -> str:
@@ -166,13 +187,62 @@ def resolve_as3_rpm_path() -> Path:
 
 def as3_info(client: BigIPClient) -> dict[str, Any] | None:
     """Return AS3 info document when appsvcs is installed, else None."""
+    return _try_as3_info(client, retry_transient=False)
+
+
+def _try_as3_info(client: BigIPClient, *, retry_transient: bool) -> dict[str, Any] | None:
     try:
         data = client.get(AS3_INFO_PATH)
     except BigIPError as exc:
-        if is_not_found(exc) or "404" in str(exc):
+        msg = str(exc)
+        if is_not_found(exc) or "404" in msg:
+            return None
+        if retry_transient and any(
+            token in msg for token in ("500", "502", "503", "504", "timeout", "Timeout")
+        ):
+            logger.debug("AS3 /info not ready yet: %s", msg)
             return None
         raise
     return data if isinstance(data, dict) else None
+
+
+def _restart_restnoded(client: BigIPClient) -> None:
+    """Restart restnoded so newly installed iApp LX extensions can register."""
+    logger.info("Restarting restnoded to load AS3")
+    try:
+        client.post(
+            "/mgmt/tm/sys/service",
+            json_body={"command": "restart", "name": "restnoded"},
+        )
+    except BigIPError as exc:
+        logger.warning("Could not restart restnoded: %s", exc)
+
+
+def _wait_as3_ready(client: BigIPClient) -> dict[str, Any]:
+    """Poll /mgmt/shared/appsvcs/info until AS3 is ready after RPM install."""
+    timeout = _as3_ready_timeout_sec()
+    poll = _as3_ready_poll_sec()
+    restart_after = _as3_restart_restnoded_after_sec()
+    deadline = time.time() + timeout
+    started = time.time()
+    restart_attempted = False
+
+    while time.time() < deadline:
+        info = _try_as3_info(client, retry_transient=True)
+        if info is not None:
+            logger.info("AS3 is available at %s", AS3_INFO_PATH)
+            return info
+        elapsed = time.time() - started
+        if not restart_attempted and elapsed >= restart_after:
+            restart_attempted = True
+            _restart_restnoded(client)
+        time.sleep(poll)
+
+    raise BigIPError(
+        f"AS3 RPM install finished but {AS3_INFO_PATH} did not become available within "
+        f"{timeout}s. AS3 install requires the admin account (not a non-admin administrator). "
+        "Check /var/log/restnoded/restnoded.log on the BIG-IP and retry connect."
+    )
 
 
 def _wait_package_task(client: BigIPClient, task: dict[str, Any]) -> None:
@@ -215,8 +285,7 @@ def install_as3_rpm(client: BigIPClient, rpm_file: Path) -> None:
     if not isinstance(task, dict):
         raise BigIPError("Unexpected response from package-management-tasks")
     _wait_package_task(client, task)
-    if as3_info(client) is None:
-        raise BigIPError("AS3 RPM install finished but /mgmt/shared/appsvcs/info is unavailable")
+    _wait_as3_ready(client)
 
 
 def ensure_as3_available(client: BigIPClient) -> dict[str, Any]:
@@ -233,7 +302,9 @@ def ensure_as3_available(client: BigIPClient) -> dict[str, Any]:
     install_as3_rpm(client, rpm_path)
     info = as3_info(client)
     if info is None:
-        raise BigIPError("AS3 is still unavailable after RPM installation")
+        raise BigIPError(
+            f"AS3 is still unavailable at {AS3_INFO_PATH} after RPM installation"
+        )
     return info
 
 
