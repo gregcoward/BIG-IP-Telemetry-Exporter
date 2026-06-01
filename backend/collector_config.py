@@ -22,6 +22,29 @@ GENERATED_CONFIG_PATH = Path(
     os.environ.get("COLLECTOR_CONFIG_PATH", str(REPO_ROOT / "otel-collector" / "generated-config.yaml")),
 )
 
+DEFAULT_PROMETHEUS_ENDPOINT = "0.0.0.0:8889"
+
+
+def _prometheus_endpoint(params: dict[str, Any]) -> str:
+    return str(params.get("endpoint", DEFAULT_PROMETHEUS_ENDPOINT)).strip()
+
+
+def _skips_duplicate_default_prometheus(etype: str, params: dict[str, Any]) -> bool:
+    """Skip a user-added prometheus exporter that would bind the default validation port."""
+    if etype != "prometheus":
+        return False
+    endpoint = _prometheus_endpoint(params)
+    return endpoint in {DEFAULT_PROMETHEUS_ENDPOINT, ":8889", "8889"}
+
+
+def _append_default_prometheus_exporter(
+    exporters: dict[str, Any],
+    pipeline_keys: list[str],
+) -> None:
+    _, prom_block = resolve_exporter("prometheus", {"endpoint": DEFAULT_PROMETHEUS_ENDPOINT})
+    exporters["prometheus/validation"] = prom_block
+    pipeline_keys.append("prometheus/validation")
+
 
 def _append_pipeline_exporters(
     items: list[dict[str, Any]],
@@ -29,6 +52,7 @@ def _append_pipeline_exporters(
     pipeline: str,
     exporters: dict[str, Any],
     pipeline_keys: list[str],
+    skip_default_prometheus: bool = False,
 ) -> None:
     """Merge enabled exporter selections into the collector config for one pipeline."""
     for idx, item in enumerate(items):
@@ -36,6 +60,8 @@ def _append_pipeline_exporters(
             continue
         etype = item["type"]
         params = {**(item.get("params") or {}), "_pipeline": pipeline}
+        if skip_default_prometheus and _skips_duplicate_default_prometheus(etype, params):
+            continue
         component, block = resolve_exporter(etype, params)
         prefix = "m" if pipeline == "metrics" else "l"
         key = f"{component}/{prefix}{idx}"
@@ -75,10 +101,10 @@ def build_collector_config(
             pipeline="metrics",
             exporters=exporters,
             pipeline_keys=metric_pipeline_keys,
+            skip_default_prometheus=True,
         )
         if not metric_pipeline_keys:
-            exporters["debug/metrics"] = {"verbosity": "basic"}
-            metric_pipeline_keys.append("debug/metrics")
+            _append_default_prometheus_exporter(exporters, metric_pipeline_keys)
 
     if export_logs:
         _append_pipeline_exporters(

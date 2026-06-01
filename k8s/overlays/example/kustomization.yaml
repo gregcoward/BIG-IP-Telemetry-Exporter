@@ -18,3 +18,6 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: bigip-telemetry.mycompany.example
+      - op: replace
+        path: /spec/rules/1/host
+        value: prometheus.bigip-telemetry.mycompany.example

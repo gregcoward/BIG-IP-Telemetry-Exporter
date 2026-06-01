@@ -1357,7 +1357,7 @@ export default function App() {
           renderExporterSection(
             "metrics",
             "Metric exporters",
-            "Forward polled BIG-IP metrics (OTLP → collector). Add a metric exporter below or metrics are logged via the debug exporter until you configure one.",
+            "Forward polled BIG-IP metrics (OTLP → collector). Add a metric exporter below or metrics are exposed on Prometheus scrape port :8889 (Prometheus UI on :9090 when using docker compose).",
             metricExporters,
             setMetricExporters,
           )}

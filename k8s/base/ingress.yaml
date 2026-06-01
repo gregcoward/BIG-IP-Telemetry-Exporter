@@ -19,3 +19,13 @@ spec:
                 name: bigip-telemetry-backend
                 port:
                   number: 8000
+    - host: prometheus.bigip-telemetry.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090

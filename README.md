@@ -328,6 +328,8 @@ Verify the collector is running:
 | Service | Port | Purpose |
 |---------|------|---------|
 | `otel-collector` | 4318 | OTLP HTTP (backend sends metrics here) |
+| `otel-collector` | 8889 | Prometheus scrape endpoint (default when no metric exporters configured) |
+| `prometheus` | 9090 | Prometheus UI (scrapes collector :8889) |
 | `otel-collector` | 5140 | Syslog receiver (ASM/AFM security logs, system syslog) |
 | `otel-collector` | 5141 | tcplog receiver (LTM request/response logs via HSL) |
 | `otel-collector` | 13133 | Health check |

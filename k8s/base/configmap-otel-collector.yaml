@@ -29,8 +29,10 @@ data:
         limit_mib: 512
         spike_limit_mib: 128
     exporters:
-      debug/metrics:
-        verbosity: basic
+      prometheus/validation:
+        endpoint: 0.0.0.0:8889
+        const_labels:
+          source: bigip-telemetry-exporter
       debug/logs:
         verbosity: basic
     extensions:
@@ -42,7 +44,7 @@ data:
         metrics:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [debug/metrics]
+          exporters: [prometheus/validation]
         logs:
           receivers: [syslog, tcplog]
           processors: [memory_limiter, batch]
