@@ -8,7 +8,7 @@ Detailed companion to the [User guide section in README](../README.md). Assumes 
 - OpenTelemetry Collector running (Docker Compose on Ubuntu, or cluster workload on Kubernetes)
 - Network path from the **Python backend** to each BIG-IP management IP (HTTPS, typically port 443)
 - For log export: network path from each **BIG-IP** to the collector host on **5140** (syslog) and **5141** (HSL tcplog)
-- For AS3 logging profiles: **F5 AS3** on the BIG-IP, or `BIGIP_AS3_RPM_PATH` pointing at a local `f5-appsvcs-*.noarch.rpm` for automatic install on connect
+- For AS3 logging profiles: **F5 AS3** on the BIG-IP, or allow automatic install from [F5 AS3 GitHub releases](https://github.com/F5Networks/f5-appsvcs-extension/releases) (default when `BIGIP_AS3_AUTO_INSTALL=true`)
 
 After upgrading the repo, rebuild the UI when not using Vite dev mode:
 

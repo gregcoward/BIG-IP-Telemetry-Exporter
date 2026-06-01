@@ -161,8 +161,12 @@ Credentials stay in the API process memory (not written to disk by default). Res
 | `BIGIP_TCP_ANALYTICS_PROFILE_NAME` | `bigip-telemetry-tcp-analytics` | AVR TCP analytics profile name |
 | `BIGIP_HTTP_ANALYTICS_AUTO_CREATE` | `true` | Set `false` to skip HTTP analytics profile |
 | `BIGIP_TCP_ANALYTICS_AUTO_CREATE` | `true` | Set `false` to skip TCP analytics profile |
-| `BIGIP_AS3_RPM_PATH` | _(unset)_ | Local path to `f5-appsvcs-*.noarch.rpm` for auto-install when AS3 is missing |
+| `BIGIP_AS3_RPM_PATH` | _(unset)_ | Local path to `f5-appsvcs-*.noarch.rpm`; when unset, the latest RPM is downloaded from [F5 AS3 GitHub releases](https://github.com/F5Networks/f5-appsvcs-extension/releases) |
 | `BIGIP_AS3_AUTO_INSTALL` | `true` | Set `false` to require AS3 pre-installed |
+| `BIGIP_AS3_GITHUB_DOWNLOAD` | `true` | Set `false` to disable GitHub RPM download when `BIGIP_AS3_RPM_PATH` is unset |
+| `BIGIP_AS3_RELEASE_VERSION` | `latest` | GitHub release tag (e.g. `v3.56.0`) or `latest` |
+| `BIGIP_AS3_DOWNLOAD_CACHE_DIR` | `~/.cache/bigip-telemetry-exporter/as3-rpms` | Cache directory for downloaded AS3 RPMs |
+| `BIGIP_AS3_GITHUB_REPO` | `F5Networks/f5-appsvcs-extension` | GitHub repo for AS3 release downloads |
 | `BIGIP_AS3_SCHEMA_VERSION` | `3.49.0` | AS3 declaration `schemaVersion` when `/info` is unavailable |
 
 ### 2. Select API endpoints

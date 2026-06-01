@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from backend.bigip_client import BigIPClient, BigIPError, format_icontrol_error
 from backend.bigip_resource import is_not_found, path_from_self_link
+
+logger = logging.getLogger(__name__)
 
 AS3_INFO_PATH = "/mgmt/shared/appsvcs/info"
 AS3_DECLARE_PATH = "/mgmt/shared/appsvcs/declare"
@@ -17,6 +23,9 @@ PACKAGE_TASKS_PATH = "/mgmt/shared/iapp/package-management-tasks"
 DEFAULT_SCHEMA_VERSION = "3.49.0"
 DEFAULT_INSTALL_TIMEOUT_SEC = 600
 DEFAULT_PACKAGE_POLL_SEC = 2.0
+DEFAULT_GITHUB_REPO = "F5Networks/f5-appsvcs-extension"
+DEFAULT_DOWNLOAD_CACHE_DIR = Path.home() / ".cache" / "bigip-telemetry-exporter" / "as3-rpms"
+RPM_NAME_RE = re.compile(r"^f5-appsvcs-.*\.noarch\.rpm$")
 
 
 def _schema_version() -> str:
@@ -38,6 +47,121 @@ def _auto_install_enabled() -> bool:
 def _install_timeout_sec() -> int:
     raw = os.environ.get("BIGIP_AS3_INSTALL_TIMEOUT_SEC", str(DEFAULT_INSTALL_TIMEOUT_SEC)).strip()
     return int(raw)
+
+
+def _github_repo() -> str:
+    return os.environ.get("BIGIP_AS3_GITHUB_REPO", DEFAULT_GITHUB_REPO).strip() or DEFAULT_GITHUB_REPO
+
+
+def _release_version() -> str:
+    return os.environ.get("BIGIP_AS3_RELEASE_VERSION", "latest").strip() or "latest"
+
+
+def _download_cache_dir() -> Path:
+    raw = os.environ.get("BIGIP_AS3_DOWNLOAD_CACHE_DIR", "").strip()
+    return Path(raw) if raw else DEFAULT_DOWNLOAD_CACHE_DIR
+
+
+def _github_download_enabled() -> bool:
+    return os.environ.get("BIGIP_AS3_GITHUB_DOWNLOAD", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _github_release_url() -> str:
+    repo = _github_repo()
+    version = _release_version()
+    base = f"https://api.github.com/repos/{repo}/releases"
+    if version.lower() == "latest":
+        return f"{base}/latest"
+    tag = version if version.startswith("v") else f"v{version}"
+    return f"{base}/tags/{tag}"
+
+
+def _fetch_github_release() -> dict[str, Any]:
+    url = _github_release_url()
+    try:
+        response = requests.get(
+            url,
+            timeout=60,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise BigIPError(
+            f"Could not fetch AS3 release metadata from GitHub ({url}): {exc}"
+        ) from exc
+    data = response.json()
+    if not isinstance(data, dict):
+        raise BigIPError("Unexpected GitHub release response for AS3")
+    return data
+
+
+def _rpm_asset_from_release(release: dict[str, Any]) -> tuple[str, str]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise BigIPError("GitHub AS3 release has no downloadable assets")
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name", "")).strip()
+        download_url = str(asset.get("browser_download_url", "")).strip()
+        if RPM_NAME_RE.match(name) and download_url:
+            return name, download_url
+    tag = release.get("tag_name") or release.get("name") or "unknown"
+    raise BigIPError(
+        f"No f5-appsvcs-*.noarch.rpm asset found in GitHub release {tag} "
+        f"(repo {_github_repo()})."
+    )
+
+
+def download_as3_rpm_from_github() -> Path:
+    """Download the AS3 RPM from the official GitHub releases (cached locally)."""
+    release = _fetch_github_release()
+    name, download_url = _rpm_asset_from_release(release)
+    cache_dir = _download_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    dest = cache_dir / name
+    if dest.is_file() and dest.stat().st_size > 0:
+        logger.info("Using cached AS3 RPM at %s", dest)
+        return dest
+
+    logger.info("Downloading AS3 RPM %s from GitHub", name)
+    partial = dest.with_suffix(dest.suffix + ".part")
+    try:
+        with requests.get(download_url, timeout=600, stream=True) as response:
+            response.raise_for_status()
+            with partial.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        handle.write(chunk)
+        partial.replace(dest)
+    except requests.RequestException as exc:
+        partial.unlink(missing_ok=True)
+        raise BigIPError(f"Failed to download AS3 RPM from GitHub: {exc}") from exc
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        raise BigIPError(f"Failed to write AS3 RPM to {dest}: {exc}") from exc
+
+    if not dest.is_file() or dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        raise BigIPError(f"Downloaded AS3 RPM at {dest} is empty")
+    return dest
+
+
+def resolve_as3_rpm_path() -> Path:
+    """Return a local AS3 RPM path, downloading from GitHub when configured."""
+    local = _rpm_path()
+    if local:
+        return Path(local)
+    if not _github_download_enabled():
+        raise BigIPError(
+            "AS3 is not installed. Set BIGIP_AS3_RPM_PATH to a local f5-appsvcs-*.noarch.rpm "
+            "file, or enable BIGIP_AS3_GITHUB_DOWNLOAD to fetch from GitHub releases."
+        )
+    return download_as3_rpm_from_github()
 
 
 def as3_info(client: BigIPClient) -> dict[str, Any] | None:
@@ -96,22 +220,17 @@ def install_as3_rpm(client: BigIPClient, rpm_file: Path) -> None:
 
 
 def ensure_as3_available(client: BigIPClient) -> dict[str, Any]:
-    """Verify AS3 is installed; optionally install from BIGIP_AS3_RPM_PATH."""
+    """Verify AS3 is installed; optionally install from local path or GitHub release."""
     info = as3_info(client)
     if info is not None:
         return info
     if not _auto_install_enabled():
         raise BigIPError(
             "F5 Application Services (AS3) is not installed on this BIG-IP. "
-            "Install the f5-appsvcs RPM or set BIGIP_AS3_AUTO_INSTALL=true with BIGIP_AS3_RPM_PATH."
+            "Install the f5-appsvcs RPM or set BIGIP_AS3_AUTO_INSTALL=true."
         )
-    rpm = _rpm_path()
-    if not rpm:
-        raise BigIPError(
-            "AS3 is not installed. Set BIGIP_AS3_RPM_PATH to a local f5-appsvcs-*.noarch.rpm "
-            "file so the exporter can upload and install it, or install AS3 on the BIG-IP manually."
-        )
-    install_as3_rpm(client, Path(rpm))
+    rpm_path = resolve_as3_rpm_path()
+    install_as3_rpm(client, rpm_path)
     info = as3_info(client)
     if info is None:
         raise BigIPError("AS3 is still unavailable after RPM installation")
