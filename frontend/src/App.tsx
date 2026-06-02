@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import f5LogoUrl from "../../F5-logo-F5-rgb.svg";
 
 const THEME_STORAGE_KEY = "bigip-telemetry-ui-theme";
@@ -238,6 +238,8 @@ export default function App() {
     label: string;
     steps: unknown[];
   } | null>(null);
+
+  const endpointPatchSeqRef = useRef(0);
 
   useEffect(() => {
     const resolved = resolveTheme(themeMode);
@@ -570,6 +572,7 @@ export default function App() {
 
   const updateDeviceMetricEndpoints = useCallback(
     async (sessionId: string, endpoints: string[]) => {
+      const seq = ++endpointPatchSeqRef.current;
       setError(null);
       setDevices((prev) =>
         prev.map((d) =>
@@ -585,11 +588,24 @@ export default function App() {
             body: JSON.stringify({ endpoints }),
           },
         );
-        const data = await readJson<{ device: BigIPDevice }>(r);
+        if (seq !== endpointPatchSeqRef.current) return;
+        const data = await readJson<{ device: BigIPDevice; export_restarted?: boolean }>(r);
         setDevices((prev) =>
           prev.map((d) => (d.session_id === sessionId ? data.device : d)),
         );
+        if (data.export_restarted) {
+          const statusRes = await apiFetch("/api/export/status");
+          const statusData = await readJson<{
+            loop: Record<string, unknown>;
+            log_forwarding?: Record<string, unknown>;
+          }>(statusRes);
+          setExportStatus({
+            ...statusData.loop,
+            log_forwarding: statusData.log_forwarding,
+          });
+        }
       } catch (e) {
+        if (seq !== endpointPatchSeqRef.current) return;
         setError(e instanceof Error ? e.message : String(e));
         await refreshDevices();
       }
@@ -705,11 +721,18 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
+      const endpointsBySession: Record<string, string[]> = {};
+      for (const d of devices) {
+        if (sessionIds.includes(d.session_id) && d.export_metrics !== false) {
+          endpointsBySession[d.session_id] = d.metric_endpoints ?? [];
+        }
+      }
       const r = await apiFetch("/api/export/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_ids: sessionIds,
+          endpoints_by_session: endpointsBySession,
           metrics_only: metricsOnly,
           modules: moduleFilter ? [moduleFilter] : [],
           poll_interval_sec: pollInterval,
@@ -718,11 +741,13 @@ export default function App() {
       });
       const data = await readJson<{
         status?: Record<string, unknown>;
+        first_run?: Record<string, unknown>;
         log_forwarding?: Record<string, unknown>;
         mode?: string;
       }>(r);
       setExportStatus({
         ...(data.status ?? {}),
+        first_run: data.first_run,
         log_forwarding: data.log_forwarding,
         mode: data.mode,
       });
@@ -753,11 +778,18 @@ export default function App() {
 
   const toggleEndpoint = (ep: string) => {
     if (!configuringSessionId) return;
-    const device = devices.find((d) => d.session_id === configuringSessionId);
-    const current = new Set(device?.metric_endpoints ?? []);
-    if (current.has(ep)) current.delete(ep);
-    else current.add(ep);
-    void updateDeviceMetricEndpoints(configuringSessionId, Array.from(current));
+    setDevices((prev) => {
+      const device = prev.find((d) => d.session_id === configuringSessionId);
+      if (!device) return prev;
+      const current = new Set(device.metric_endpoints ?? []);
+      if (current.has(ep)) current.delete(ep);
+      else current.add(ep);
+      const next = Array.from(current);
+      void updateDeviceMetricEndpoints(configuringSessionId, next);
+      return prev.map((d) =>
+        d.session_id === configuringSessionId ? { ...d, metric_endpoints: next } : d,
+      );
+    });
   };
 
   const setConfiguringEndpoints = (endpoints: string[]) => {
@@ -1528,7 +1560,11 @@ export default function App() {
           </div>
         </div>
         {exportStatus?.running === true && (
-          <p className="muted">Metrics export is running in the background.</p>
+          <p className="muted">
+            Metrics export is running. Endpoint changes apply on the next poll (or immediately
+            when export is active). Use Refresh status to see{" "}
+            <code>metric_endpoints_by_host</code> — the paths currently being polled.
+          </p>
         )}
         <div className="actions">
           <button type="button" className="btn btn-primary" onClick={() => void startExport()}>

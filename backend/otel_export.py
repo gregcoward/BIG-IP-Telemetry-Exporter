@@ -59,17 +59,15 @@ class OTLPMetricsPusher:
             safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)[:255]
             if safe not in self._instruments:
                 host = pt.get("attributes", {}).get("bigip.host", "unknown")
-                self._instruments[safe] = self._meter.create_up_down_counter(
+                self._instruments[safe] = self._meter.create_gauge(
                     safe,
                     description=f"BIG-IP metric {name} ({host})",
                 )
             inst = self._instruments[safe]
             value = pt["value"]
             attrs = self._otel_attributes(pt.get("attributes") or {})
-            inst.add(
-                int(value) if float(value).is_integer() else value,
-                attributes=attrs,
-            )
+            numeric = int(value) if float(value).is_integer() else float(value)
+            inst.set(numeric, attributes=attrs)
             count += 1
         return count
 
@@ -114,6 +112,7 @@ class MetricsExportLoop:
             "endpoints_by_host": {
                 host: len(eps) for host, eps in endpoints_by_host.items()
             },
+            "metric_endpoints_by_host": endpoints_by_host,
             "bigip_count": len(self._clients),
             "bigip_hosts": [h for h, _, _ in self._clients],
             "last_run": self._last_run,

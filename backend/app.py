@@ -417,6 +417,37 @@ def _live_metric_endpoints_for_session(session_id: str) -> list[str]:
     return _resolve_metric_endpoints_for_session(sess)
 
 
+def _apply_metric_endpoints_by_session(endpoints_by_session: dict[str, list[str]]) -> None:
+    for sid, eps in endpoints_by_session.items():
+        sess = _sessions.get(sid)
+        if not sess:
+            continue
+        sess.metric_endpoints = [ep.strip() for ep in eps if ep.strip()]
+
+
+def _export_start_body_from_config() -> ExportStartBody | None:
+    if not _export_config or not _export_config.get("active"):
+        return None
+    session_ids = [
+        sid for sid in (_export_config.get("session_ids") or []) if sid in _sessions
+    ]
+    if not session_ids:
+        return None
+    return ExportStartBody(
+        session_ids=session_ids,
+        metrics_only=bool(_export_config.get("metrics_only", True)),
+        modules=list(_export_config.get("modules") or []),
+        poll_interval_sec=float(_export_config.get("poll_interval_sec", 30)),
+        otlp_endpoint=str(_export_config.get("otlp_endpoint") or DEFAULT_OTLP_ENDPOINT),
+    )
+
+
+def _restart_active_export() -> None:
+    body = _export_start_body_from_config()
+    if body:
+        _start_export(body)
+
+
 def _stop_metrics_export(*, join_timeout_sec: float = 10.0) -> None:
     global _export_loop, _pusher
     if _export_loop:
@@ -508,6 +539,10 @@ class ExportStartBody(BaseModel):
         description="BIG-IP session IDs to poll; empty = all connected devices",
     )
     endpoints: list[str] = Field(default_factory=list)
+    endpoints_by_session: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Per-device metric API paths from the UI; applied before export starts",
+    )
     metrics_only: bool = True
     modules: list[str] = Field(default_factory=list)
     poll_interval_sec: float = 30.0
@@ -908,7 +943,18 @@ def update_metric_endpoints(session_id: str, body: MetricEndpointsBody) -> dict[
             "endpoints": sorted({ep for eps in by_session.values() for ep in eps}),
         }
     _persist_runtime_state()
-    return {"ok": True, "device": _session_to_dict(session_id, s)}
+    export_restarted = False
+    if _export_loop and _export_loop.status.get("running") and _export_config:
+        try:
+            _restart_active_export()
+            export_restarted = True
+        except HTTPException:
+            pass
+    return {
+        "ok": True,
+        "device": _session_to_dict(session_id, s),
+        "export_restarted": export_restarted,
+    }
 
 
 @app.post("/api/session/{session_id}/rollback")
@@ -1126,6 +1172,8 @@ def _resolve_export_sessions(
 
 def _start_export(body: ExportStartBody) -> dict[str, Any]:
     global _export_loop, _pusher, _log_export, _export_config
+    if body.endpoints_by_session:
+        _apply_metric_endpoints_by_session(body.endpoints_by_session)
     metrics_clients, log_hosts = _resolve_export_sessions(body.session_ids)
     resolved_session_ids = body.session_ids if body.session_ids else list(_sessions.keys())
     endpoints_by_session = {
