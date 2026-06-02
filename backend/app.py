@@ -432,6 +432,30 @@ def _resolve_metric_endpoints_for_session(
     return _catalog_metric_endpoints(metrics_only=metrics_only, modules=modules or None)
 
 
+def _live_metric_endpoints_for_session(session_id: str) -> list[str]:
+    """Resolve the current metric endpoints for a session (used each export poll)."""
+    sess = _sessions.get(session_id)
+    if not sess or not sess.export_metrics:
+        return []
+    cfg = _export_config or {}
+    return _resolve_metric_endpoints_for_session(
+        sess,
+        fallback_endpoints=list(cfg.get("endpoints") or []),
+        metrics_only=bool(cfg.get("metrics_only", True)),
+        modules=list(cfg.get("modules") or []),
+    )
+
+
+def _stop_metrics_export(*, join_timeout_sec: float = 10.0) -> None:
+    global _export_loop, _pusher
+    if _export_loop:
+        _export_loop.stop(join_timeout_sec=join_timeout_sec)
+    if _pusher:
+        _pusher.shutdown()
+    _export_loop = None
+    _pusher = None
+
+
 def _module_counts(rows: list[dict[str, str]] | None = None) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows if rows is not None else _load_apis():
@@ -904,8 +928,17 @@ def update_log_options(session_id: str, body: LogOptionsBody, request: Request) 
 
 @app.patch("/api/session/{session_id}/metric-endpoints")
 def update_metric_endpoints(session_id: str, body: MetricEndpointsBody) -> dict[str, Any]:
+    global _export_config
     s = _get_session(session_id)
     s.metric_endpoints = [ep.strip() for ep in body.endpoints if ep.strip()]
+    if _export_config and _export_config.get("active"):
+        by_session = dict(_export_config.get("endpoints_by_session") or {})
+        by_session[session_id] = list(s.metric_endpoints)
+        _export_config = {
+            **_export_config,
+            "endpoints_by_session": by_session,
+            "endpoints": sorted({ep for eps in by_session.values() for ep in eps}),
+        }
     _persist_runtime_state()
     return {"ok": True, "device": _session_to_dict(session_id, s)}
 
@@ -1088,7 +1121,7 @@ def _resolve_export_sessions(
     fallback_endpoints: list[str],
     metrics_only: bool,
     modules: list[str],
-) -> tuple[list[tuple[str, str, BigIPClient, list[str]]], list[str]]:
+) -> tuple[list[tuple[str, str, BigIPClient]], list[str]]:
     _gc_sessions()
     ids = session_ids or list(_sessions.keys())
     if not ids:
@@ -1096,7 +1129,7 @@ def _resolve_export_sessions(
             status_code=400,
             detail="No BIG-IP devices connected. Add at least one device before starting export.",
         )
-    metrics_clients: list[tuple[str, str, BigIPClient, list[str]]] = []
+    metrics_clients: list[tuple[str, str, BigIPClient]] = []
     log_hosts: list[str] = []
     for sid in ids:
         sess = _get_session(sid)
@@ -1117,7 +1150,7 @@ def _resolve_export_sessions(
                     ),
                 )
             metrics_clients.append(
-                (_display_host(sess.host), sid, sess.client, endpoints),
+                (_display_host(sess.host), sid, sess.client),
             )
         if sess.export_system_logs or (
             sess.export_logs
@@ -1141,8 +1174,11 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
         modules=list(body.modules),
     )
     resolved_session_ids = body.session_ids if body.session_ids else list(_sessions.keys())
-    endpoints_by_session = {sid: eps for _, sid, _, eps in metrics_clients}
-    endpoints_used = sorted({ep for _, _, _, eps in metrics_clients for ep in eps})
+    endpoints_by_session = {
+        sid: _live_metric_endpoints_for_session(sid)
+        for _, sid, _ in metrics_clients
+    }
+    endpoints_used = sorted({ep for eps in endpoints_by_session.values() for ep in eps})
 
     log_cfg = runtime_log_config()
     _log_export = {
@@ -1163,41 +1199,34 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
     response: dict[str, Any] = {
         "started": True,
         "log_forwarding": _log_export,
-        "bigip_count": len({h for h, _, _, _ in metrics_clients} | set(log_hosts)),
-        "metrics_hosts": [h for h, _, _, _ in metrics_clients],
+        "bigip_count": len({h for h, _, _ in metrics_clients} | set(log_hosts)),
+        "metrics_hosts": [h for h, _, _ in metrics_clients],
         "log_hosts": log_hosts,
     }
 
     if metrics_clients:
-        if _export_loop and _export_loop.status.get("running"):
-            _export_loop.stop()
-        if _pusher:
-            _pusher.shutdown()
+        _stop_metrics_export()
 
         otlp = body.otlp_endpoint.rstrip("/")
         _pusher = OTLPMetricsPusher(otlp)
         _export_loop = MetricsExportLoop(
             metrics_clients,
             _pusher,
+            _live_metric_endpoints_for_session,
             poll_interval_sec=body.poll_interval_sec,
         )
         result = _export_loop.run_once()
         _export_loop.start_background()
         response.update(
             {
-                "endpoints": sum(len(eps) for _, _, _, eps in metrics_clients),
+                "endpoints": sum(len(eps) for eps in endpoints_by_session.values()),
                 "endpoints_by_session": endpoints_by_session,
                 "first_run": result,
                 "status": _export_loop.status,
             },
         )
     else:
-        if _export_loop and _export_loop.status.get("running"):
-            _export_loop.stop()
-        if _pusher:
-            _pusher.shutdown()
-        _export_loop = None
-        _pusher = None
+        _stop_metrics_export()
         response["mode"] = "logs_only"
 
     _export_config = {
@@ -1221,13 +1250,8 @@ def export_start(body: ExportStartBody) -> dict[str, Any]:
 
 @app.post("/api/export/stop")
 def export_stop() -> dict[str, Any]:
-    global _export_loop, _pusher, _log_export, _export_config
-    if _export_loop:
-        _export_loop.stop()
-    if _pusher:
-        _pusher.shutdown()
-    _export_loop = None
-    _pusher = None
+    global _log_export, _export_config
+    _stop_metrics_export()
     _log_export = {
         "active": False,
         "hosts": [],

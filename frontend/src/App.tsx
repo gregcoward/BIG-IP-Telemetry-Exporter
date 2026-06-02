@@ -571,6 +571,11 @@ export default function App() {
   const updateDeviceMetricEndpoints = useCallback(
     async (sessionId: string, endpoints: string[]) => {
       setError(null);
+      setDevices((prev) =>
+        prev.map((d) =>
+          d.session_id === sessionId ? { ...d, metric_endpoints: endpoints } : d,
+        ),
+      );
       try {
         const r = await apiFetch(
           `/api/session/${encodeURIComponent(sessionId)}/metric-endpoints`,
@@ -748,7 +753,8 @@ export default function App() {
 
   const toggleEndpoint = (ep: string) => {
     if (!configuringSessionId) return;
-    const current = new Set(configuringDevice?.metric_endpoints ?? []);
+    const device = devices.find((d) => d.session_id === configuringSessionId);
+    const current = new Set(device?.metric_endpoints ?? []);
     if (current.has(ep)) current.delete(ep);
     else current.add(ep);
     void updateDeviceMetricEndpoints(configuringSessionId, Array.from(current));

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from opentelemetry import metrics
@@ -12,8 +14,9 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
-# (display host, session_id, client, endpoints)
-BigIPClientEntry = tuple[str, str, Any, list[str]]
+# (display host, session_id, client)
+BigIPClientEntry = tuple[str, str, Any]
+EndpointResolver = Callable[[str], list[str]]
 
 
 class OTLPMetricsPusher:
@@ -82,32 +85,42 @@ class MetricsExportLoop:
         self,
         clients: list[BigIPClientEntry],
         pusher: OTLPMetricsPusher,
+        endpoint_resolver: EndpointResolver,
         *,
         poll_interval_sec: float = 30.0,
     ) -> None:
         self._clients = clients
         self._pusher = pusher
+        self._endpoint_resolver = endpoint_resolver
         self._poll_interval_sec = poll_interval_sec
         self._running = False
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
         self._last_run: float | None = None
         self._last_error: str | None = None
         self._last_point_count = 0
         self._last_errors_by_host: dict[str, list[str]] = {}
+        self._last_endpoints_by_host: dict[str, list[str]] = {}
 
     @property
     def status(self) -> dict[str, Any]:
+        endpoints_by_host = {
+            host: self._endpoint_resolver(sid)
+            for host, sid, _ in self._clients
+        }
         return {
             "running": self._running,
-            "endpoint_count": sum(len(eps) for _, _, _, eps in self._clients),
+            "endpoint_count": sum(len(eps) for eps in endpoints_by_host.values()),
             "endpoints_by_host": {
-                host: len(eps) for host, _, _, eps in self._clients
+                host: len(eps) for host, eps in endpoints_by_host.items()
             },
             "bigip_count": len(self._clients),
-            "bigip_hosts": [h for h, _, _, _ in self._clients],
+            "bigip_hosts": [h for h, _, _ in self._clients],
             "last_run": self._last_run,
             "last_error": self._last_error,
             "last_point_count": self._last_point_count,
             "last_errors_by_host": self._last_errors_by_host,
+            "last_endpoints_by_host": self._last_endpoints_by_host,
             "poll_interval_sec": self._poll_interval_sec,
         }
 
@@ -117,8 +130,11 @@ class MetricsExportLoop:
         total = 0
         errors: list[str] = []
         errors_by_host: dict[str, list[str]] = {}
+        endpoints_by_host: dict[str, list[str]] = {}
 
-        for host, _sid, client, endpoints in self._clients:
+        for host, sid, client in self._clients:
+            endpoints = self._endpoint_resolver(sid)
+            endpoints_by_host[host] = endpoints
             host_errors: list[str] = []
             for ep in endpoints:
                 try:
@@ -136,19 +152,20 @@ class MetricsExportLoop:
         self._last_run = time.time()
         self._last_point_count = total
         self._last_errors_by_host = errors_by_host
+        self._last_endpoints_by_host = endpoints_by_host
         self._last_error = "; ".join(errors[:8]) if errors else None
         return {
             "points": total,
             "errors": errors,
             "errors_by_host": errors_by_host,
+            "endpoints_by_host": endpoints_by_host,
         }
 
     def start_background(self) -> None:
-        import threading
-
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
 
         def _loop() -> None:
             while self._running:
@@ -156,10 +173,15 @@ class MetricsExportLoop:
                     self.run_once()
                 except Exception as exc:  # noqa: BLE001
                     self._last_error = str(exc)
-                time.sleep(self._poll_interval_sec)
+                if self._stop_event.wait(timeout=self._poll_interval_sec):
+                    break
 
-        t = threading.Thread(target=_loop, name="bigip-export-loop", daemon=True)
-        t.start()
+        self._thread = threading.Thread(target=_loop, name="bigip-export-loop", daemon=True)
+        self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, join_timeout_sec: float = 10.0) -> None:
         self._running = False
+        self._stop_event.set()
+        thread = self._thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=join_timeout_sec)
