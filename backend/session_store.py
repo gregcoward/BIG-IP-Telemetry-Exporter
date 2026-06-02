@@ -105,6 +105,9 @@ def session_record_from_dict(session_id: str, data: dict[str, Any]) -> dict[str,
         "prov_asm": bool(data.get("prov_asm", False)),
         "prov_afm": bool(data.get("prov_afm", False)),
         "prov_avr": bool(data.get("prov_avr", False)),
+        "metric_endpoints": [
+            str(ep) for ep in (data.get("metric_endpoints") or []) if str(ep).strip()
+        ],
     }
 
 

@@ -9,7 +9,7 @@ import secrets
 import time
 import traceback
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +107,7 @@ class _Session:
     prov_asm: bool = False
     prov_afm: bool = False
     prov_avr: bool = False
+    metric_endpoints: list[str] = field(default_factory=list)
 
 
 _sessions: dict[str, _Session] = {}
@@ -156,6 +157,7 @@ def _session_persist_payload(session_id: str, sess: _Session) -> dict[str, Any]:
             "prov_asm": sess.prov_asm,
             "prov_afm": sess.prov_afm,
             "prov_avr": sess.prov_avr,
+            "metric_endpoints": list(sess.metric_endpoints),
         },
     )
 
@@ -248,6 +250,9 @@ def _session_from_record(record: dict[str, Any]) -> _Session:
         prov_asm=bool(record.get("prov_asm", False)),
         prov_afm=bool(record.get("prov_afm", False)),
         prov_avr=bool(record.get("prov_avr", False)),
+        metric_endpoints=[
+            str(ep) for ep in (record.get("metric_endpoints") or []) if str(ep).strip()
+        ],
     )
 
 
@@ -371,6 +376,7 @@ def _session_to_dict(session_id: str, sess: _Session) -> dict[str, Any]:
         "prov_avr": sess.prov_avr,
         "connected_since": sess.created,
         "has_log_resources": session_has_log_resources(sess),
+        "metric_endpoints": list(sess.metric_endpoints),
     }
 
 
@@ -396,6 +402,34 @@ def _load_apis() -> list[dict[str, str]]:
         return []
     with APIS_CSV.open(newline="", encoding="utf-8") as f:
         return [_normalize_api_row(r) for r in csv.DictReader(f)]
+
+
+def _catalog_metric_endpoints(
+    *,
+    metrics_only: bool = True,
+    modules: list[str] | None = None,
+) -> list[str]:
+    rows = _load_apis()
+    if metrics_only:
+        rows = [r for r in rows if r.get("collect_metrics", "").lower() == "true"]
+    if modules:
+        mods = {m.upper() for m in modules}
+        rows = [r for r in rows if (r.get("module") or "").upper() in mods]
+    return [r["endpoint"] for r in rows]
+
+
+def _resolve_metric_endpoints_for_session(
+    sess: _Session,
+    *,
+    fallback_endpoints: list[str],
+    metrics_only: bool,
+    modules: list[str],
+) -> list[str]:
+    if sess.metric_endpoints:
+        return list(sess.metric_endpoints)
+    if fallback_endpoints:
+        return list(fallback_endpoints)
+    return _catalog_metric_endpoints(metrics_only=metrics_only, modules=modules or None)
 
 
 def _module_counts(rows: list[dict[str, str]] | None = None) -> dict[str, int]:
@@ -508,6 +542,10 @@ class LogOptionsBody(BaseModel):
     export_asm_logs: bool | None = None
     export_afm_logs: bool | None = None
     export_avr_logs: bool | None = None
+
+
+class MetricEndpointsBody(BaseModel):
+    endpoints: list[str] = Field(default_factory=list)
 
 
 class RollbackBody(BaseModel):
@@ -706,6 +744,9 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
 
         host_norm = _normalize_host(body.host)
         label = (body.label or "").strip() or _display_host(host_norm)
+        default_metric_endpoints = (
+            _catalog_metric_endpoints(metrics_only=True) if body.export_metrics else []
+        )
         sid = secrets.token_urlsafe(24)
         _sessions[sid] = _Session(
             client=client,
@@ -741,6 +782,7 @@ def connect(body: ConnectBody, request: Request) -> ConnectResponse:
             prov_asm=prov_asm,
             prov_afm=prov_afm,
             prov_avr=prov_avr,
+            metric_endpoints=default_metric_endpoints,
         )
         _persist_runtime_state()
         return ConnectResponse(
@@ -856,6 +898,14 @@ def update_log_options(session_id: str, body: LogOptionsBody, request: Request) 
     if warning:
         s.warning = _append_warning(s.warning, warning)
 
+    _persist_runtime_state()
+    return {"ok": True, "device": _session_to_dict(session_id, s)}
+
+
+@app.patch("/api/session/{session_id}/metric-endpoints")
+def update_metric_endpoints(session_id: str, body: MetricEndpointsBody) -> dict[str, Any]:
+    s = _get_session(session_id)
+    s.metric_endpoints = [ep.strip() for ep in body.endpoints if ep.strip()]
     _persist_runtime_state()
     return {"ok": True, "device": _session_to_dict(session_id, s)}
 
@@ -1034,7 +1084,11 @@ def export_status() -> dict[str, Any]:
 
 def _resolve_export_sessions(
     session_ids: list[str],
-) -> tuple[list[tuple[str, str, BigIPClient]], list[str]]:
+    *,
+    fallback_endpoints: list[str],
+    metrics_only: bool,
+    modules: list[str],
+) -> tuple[list[tuple[str, str, BigIPClient, list[str]]], list[str]]:
     _gc_sessions()
     ids = session_ids or list(_sessions.keys())
     if not ids:
@@ -1042,13 +1096,29 @@ def _resolve_export_sessions(
             status_code=400,
             detail="No BIG-IP devices connected. Add at least one device before starting export.",
         )
-    metrics_clients: list[tuple[str, str, BigIPClient]] = []
+    metrics_clients: list[tuple[str, str, BigIPClient, list[str]]] = []
     log_hosts: list[str] = []
     for sid in ids:
         sess = _get_session(sid)
         label = sess.label or _display_host(sess.host)
         if sess.export_metrics:
-            metrics_clients.append((_display_host(sess.host), sid, sess.client))
+            endpoints = _resolve_metric_endpoints_for_session(
+                sess,
+                fallback_endpoints=fallback_endpoints,
+                metrics_only=metrics_only,
+                modules=modules,
+            )
+            if not endpoints:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No metric endpoints selected for {label}. "
+                        "Configure API endpoints for this BIG-IP before starting export."
+                    ),
+                )
+            metrics_clients.append(
+                (_display_host(sess.host), sid, sess.client, endpoints),
+            )
         if sess.export_system_logs or (
             sess.export_logs
             and (sess.export_ltm_logs or sess.export_asm_logs or sess.export_afm_logs or sess.export_avr_logs)
@@ -1064,9 +1134,15 @@ def _resolve_export_sessions(
 
 def _start_export(body: ExportStartBody) -> dict[str, Any]:
     global _export_loop, _pusher, _log_export, _export_config
-    metrics_clients, log_hosts = _resolve_export_sessions(body.session_ids)
+    metrics_clients, log_hosts = _resolve_export_sessions(
+        body.session_ids,
+        fallback_endpoints=body.endpoints,
+        metrics_only=body.metrics_only,
+        modules=list(body.modules),
+    )
     resolved_session_ids = body.session_ids if body.session_ids else list(_sessions.keys())
-    endpoints_used: list[str] = []
+    endpoints_by_session = {sid: eps for _, sid, _, eps in metrics_clients}
+    endpoints_used = sorted({ep for _, _, _, eps in metrics_clients for ep in eps})
 
     log_cfg = runtime_log_config()
     _log_export = {
@@ -1087,25 +1163,12 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
     response: dict[str, Any] = {
         "started": True,
         "log_forwarding": _log_export,
-        "bigip_count": len({h for h, _, _ in metrics_clients} | set(log_hosts)),
-        "metrics_hosts": [h for h, _, _ in metrics_clients],
+        "bigip_count": len({h for h, _, _, _ in metrics_clients} | set(log_hosts)),
+        "metrics_hosts": [h for h, _, _, _ in metrics_clients],
         "log_hosts": log_hosts,
     }
 
     if metrics_clients:
-        endpoints = body.endpoints
-        if not endpoints:
-            rows = _load_apis()
-            if body.metrics_only:
-                rows = [r for r in rows if r.get("collect_metrics", "").lower() == "true"]
-            if body.modules:
-                mods = {m.upper() for m in body.modules}
-                rows = [r for r in rows if (r.get("module") or "").upper() in mods]
-            endpoints = [r["endpoint"] for r in rows]
-        if not endpoints:
-            raise HTTPException(status_code=400, detail="No endpoints selected")
-        endpoints_used = endpoints
-
         if _export_loop and _export_loop.status.get("running"):
             _export_loop.stop()
         if _pusher:
@@ -1115,7 +1178,6 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
         _pusher = OTLPMetricsPusher(otlp)
         _export_loop = MetricsExportLoop(
             metrics_clients,
-            endpoints,
             _pusher,
             poll_interval_sec=body.poll_interval_sec,
         )
@@ -1123,7 +1185,8 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
         _export_loop.start_background()
         response.update(
             {
-                "endpoints": len(endpoints),
+                "endpoints": sum(len(eps) for _, _, _, eps in metrics_clients),
+                "endpoints_by_session": endpoints_by_session,
                 "first_run": result,
                 "status": _export_loop.status,
             },
@@ -1141,6 +1204,7 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
         "active": True,
         "session_ids": resolved_session_ids,
         "endpoints": endpoints_used,
+        "endpoints_by_session": endpoints_by_session,
         "metrics_only": body.metrics_only,
         "modules": list(body.modules),
         "poll_interval_sec": body.poll_interval_sec,

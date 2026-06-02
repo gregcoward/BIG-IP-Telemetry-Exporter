@@ -109,6 +109,7 @@ type BigIPDevice = {
   prov_avr?: boolean;
   connected_since?: number;
   has_log_resources?: boolean;
+  metric_endpoints?: string[];
 };
 
 function exportModeLabel(device: BigIPDevice): string {
@@ -217,7 +218,7 @@ export default function App() {
   const [apis, setApis] = useState<ApiRow[]>([]);
   const [metricsOnly, setMetricsOnly] = useState(true);
   const [moduleFilter, setModuleFilter] = useState("");
-  const [selectedEndpoints, setSelectedEndpoints] = useState<Set<string>>(new Set());
+  const [configuringSessionId, setConfiguringSessionId] = useState("");
 
   const [catalog, setCatalog] = useState<ExporterCatalogItem[]>([]);
   const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
@@ -270,6 +271,7 @@ export default function App() {
         active?: boolean;
         session_ids?: string[];
         endpoints?: string[];
+        endpoints_by_session?: Record<string, string[]>;
         metrics_only?: boolean;
         modules?: string[];
         poll_interval_sec?: number;
@@ -285,8 +287,12 @@ export default function App() {
     const cfg = data.export_config;
     if (cfg) {
       if (cfg.poll_interval_sec) setPollInterval(cfg.poll_interval_sec);
-      if (cfg.endpoints?.length) setSelectedEndpoints(new Set(cfg.endpoints));
-      if (cfg.session_ids?.length) setExportDeviceIds(new Set(cfg.session_ids));
+      if (cfg.session_ids?.length) {
+        setExportDeviceIds(new Set(cfg.session_ids));
+        setConfiguringSessionId((prev) =>
+          prev && cfg.session_ids!.includes(prev) ? prev : cfg.session_ids![0],
+        );
+      }
       if (cfg.modules?.length === 1) setModuleFilter(cfg.modules[0]);
       else if (cfg.modules?.length === 0) setModuleFilter("");
       if (cfg.metrics_only !== undefined) setMetricsOnly(cfg.metrics_only);
@@ -316,16 +322,27 @@ export default function App() {
         setCatalogCategories(catData.categories ?? []);
         setContribComponents(catData.contrib_components ?? []);
         if (catData.contrib_repo_url) setContribRepoUrl(catData.contrib_repo_url);
-        const defaults = apiData.apis
-          .filter((a) => a.collect_metrics === "true")
-          .map((a) => a.endpoint);
-        setSelectedEndpoints(new Set(defaults));
         await refreshStatus();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    const metricsDevices = devices.filter((d) => d.export_metrics !== false);
+    if (metricsDevices.length === 0) {
+      setConfiguringSessionId("");
+      return;
+    }
+    if (
+      configuringSessionId &&
+      metricsDevices.some((d) => d.session_id === configuringSessionId)
+    ) {
+      return;
+    }
+    setConfiguringSessionId(metricsDevices[0].session_id);
+  }, [devices, configuringSessionId]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -346,6 +363,21 @@ export default function App() {
       logs: src.some((d) => deviceExportsLogs(d)),
     };
   }, [exportSelectedDevices, devices]);
+
+  const configuringDevice = useMemo(
+    () => devices.find((d) => d.session_id === configuringSessionId),
+    [devices, configuringSessionId],
+  );
+
+  const configuringEndpointSet = useMemo(
+    () => new Set(configuringDevice?.metric_endpoints ?? []),
+    [configuringDevice],
+  );
+
+  const metricsDevices = useMemo(
+    () => devices.filter((d) => d.export_metrics !== false),
+    [devices],
+  );
 
   const showApiEndpoints = useMemo(() => {
     if (devices.length === 0) return connectExportMetrics;
@@ -430,6 +462,7 @@ export default function App() {
       await refreshDevices();
       if (connectExportMetrics) {
         setExportDeviceIds((prev) => new Set(prev).add(data.session_id));
+        setConfiguringSessionId(data.session_id);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -535,6 +568,30 @@ export default function App() {
     [refreshDevices],
   );
 
+  const updateDeviceMetricEndpoints = useCallback(
+    async (sessionId: string, endpoints: string[]) => {
+      setError(null);
+      try {
+        const r = await apiFetch(
+          `/api/session/${encodeURIComponent(sessionId)}/metric-endpoints`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoints }),
+          },
+        );
+        const data = await readJson<{ device: BigIPDevice }>(r);
+        setDevices((prev) =>
+          prev.map((d) => (d.session_id === sessionId ? data.device : d)),
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        await refreshDevices();
+      }
+    },
+    [refreshDevices],
+  );
+
   const toggleExportDevice = (sessionId: string) => {
     setExportDeviceIds((prev) => {
       const next = new Set(prev);
@@ -627,16 +684,27 @@ export default function App() {
       );
       return;
     }
+    const metricsDevicesMissing = devices.filter(
+      (d) =>
+        exportDeviceIds.has(d.session_id) &&
+        d.export_metrics !== false &&
+        (d.metric_endpoints?.length ?? 0) === 0,
+    );
+    if (metricsDevicesMissing.length > 0) {
+      const names = metricsDevicesMissing
+        .map((d) => d.label || d.display_host)
+        .join(", ");
+      setError(`Select metric API endpoints for: ${names}`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const endpoints = Array.from(selectedEndpoints);
       const r = await apiFetch("/api/export/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_ids: sessionIds,
-          endpoints,
           metrics_only: metricsOnly,
           modules: moduleFilter ? [moduleFilter] : [],
           poll_interval_sec: pollInterval,
@@ -661,7 +729,6 @@ export default function App() {
   }, [
     devices,
     exportDeviceIds,
-    selectedEndpoints,
     metricsOnly,
     moduleFilter,
     pollInterval,
@@ -680,12 +747,16 @@ export default function App() {
   }, []);
 
   const toggleEndpoint = (ep: string) => {
-    setSelectedEndpoints((prev) => {
-      const next = new Set(prev);
-      if (next.has(ep)) next.delete(ep);
-      else next.add(ep);
-      return next;
-    });
+    if (!configuringSessionId) return;
+    const current = new Set(configuringDevice?.metric_endpoints ?? []);
+    if (current.has(ep)) current.delete(ep);
+    else current.add(ep);
+    void updateDeviceMetricEndpoints(configuringSessionId, Array.from(current));
+  };
+
+  const setConfiguringEndpoints = (endpoints: string[]) => {
+    if (!configuringSessionId) return;
+    void updateDeviceMetricEndpoints(configuringSessionId, endpoints);
   };
 
   const catalogByType = useMemo(() => {
@@ -1051,7 +1122,11 @@ export default function App() {
                     <span className="muted device-list-host"> — {d.display_host}</span>
                     <span className="muted device-list-export-mode" title="Connect options">
                       {" "}
-                      ({exportModeLabel(d)})
+                      ({exportModeLabel(d)}
+                      {d.export_metrics !== false
+                        ? `, ${d.metric_endpoints?.length ?? 0} metric endpoints`
+                        : ""}
+                      )
                     </span>
                   </span>
                 </label>
@@ -1248,9 +1323,24 @@ export default function App() {
       <section className="card">
         <h2>API endpoints ({filteredApis.length})</h2>
         <p className="muted">
-          Catalog from <code>data/bigip_apis.csv</code> ({apis.length} iControl REST paths). Select endpoints
-          to poll; stats paths are recommended for metrics.
+          Catalog from <code>data/bigip_apis.csv</code> ({apis.length} iControl REST paths).
+          Endpoint selection is per BIG-IP; stats paths are recommended for metrics.
         </p>
+        {metricsDevices.length > 0 && (
+          <div className="field">
+            <label>Configure endpoints for</label>
+            <select
+              value={configuringSessionId}
+              onChange={(e) => setConfiguringSessionId(e.target.value)}
+            >
+              {metricsDevices.map((d) => (
+                <option key={d.session_id} value={d.session_id}>
+                  {d.label || d.display_host} ({d.metric_endpoints?.length ?? 0} selected)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="row">
           <label className="check">
             <input
@@ -1284,8 +1374,9 @@ export default function App() {
           <button
             type="button"
             className="btn btn-secondary"
+            disabled={!configuringSessionId}
             onClick={() =>
-              setSelectedEndpoints(new Set(filteredApis.map((a) => a.endpoint)))
+              setConfiguringEndpoints(filteredApis.map((a) => a.endpoint))
             }
           >
             Select all visible
@@ -1293,7 +1384,8 @@ export default function App() {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => setSelectedEndpoints(new Set())}
+            disabled={!configuringSessionId}
+            onClick={() => setConfiguringEndpoints([])}
           >
             Clear selection
           </button>
@@ -1314,7 +1406,8 @@ export default function App() {
                   <td>
                     <input
                       type="checkbox"
-                      checked={selectedEndpoints.has(a.endpoint)}
+                      checked={configuringEndpointSet.has(a.endpoint)}
+                      disabled={!configuringSessionId}
                       onChange={() => toggleEndpoint(a.endpoint)}
                     />
                   </td>
@@ -1328,7 +1421,11 @@ export default function App() {
             </tbody>
           </table>
         </div>
-        <p className="muted">{selectedEndpoints.size} endpoint(s) selected</p>
+        <p className="muted">
+          {configuringDevice
+            ? `${configuringEndpointSet.size} endpoint(s) selected for ${configuringDevice.label || configuringDevice.display_host}`
+            : "Connect a BIG-IP with metrics export enabled to configure endpoints."}
+        </p>
       </section>
       )}
 
@@ -1403,6 +1500,11 @@ export default function App() {
                 <li key={d.session_id} className="connected-chip">
                   <span className="connected-chip-label">{d.label || d.display_host}</span>
                   <span className="connected-chip-host">{d.display_host}</span>
+                  {d.export_metrics !== false && (
+                    <span className="connected-chip-export" title="Metric endpoints">
+                      {d.metric_endpoints?.length ?? 0} ep
+                    </span>
+                  )}
                 </li>
               ))
             )}

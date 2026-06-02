@@ -12,8 +12,8 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
-# (display host, session_id, client)
-BigIPClientEntry = tuple[str, str, Any]
+# (display host, session_id, client, endpoints)
+BigIPClientEntry = tuple[str, str, Any, list[str]]
 
 
 class OTLPMetricsPusher:
@@ -81,13 +81,11 @@ class MetricsExportLoop:
     def __init__(
         self,
         clients: list[BigIPClientEntry],
-        endpoints: list[str],
         pusher: OTLPMetricsPusher,
         *,
         poll_interval_sec: float = 30.0,
     ) -> None:
         self._clients = clients
-        self._endpoints = endpoints
         self._pusher = pusher
         self._poll_interval_sec = poll_interval_sec
         self._running = False
@@ -100,9 +98,12 @@ class MetricsExportLoop:
     def status(self) -> dict[str, Any]:
         return {
             "running": self._running,
-            "endpoints": len(self._endpoints),
+            "endpoint_count": sum(len(eps) for _, _, _, eps in self._clients),
+            "endpoints_by_host": {
+                host: len(eps) for host, _, _, eps in self._clients
+            },
             "bigip_count": len(self._clients),
-            "bigip_hosts": [h for h, _, _ in self._clients],
+            "bigip_hosts": [h for h, _, _, _ in self._clients],
             "last_run": self._last_run,
             "last_error": self._last_error,
             "last_point_count": self._last_point_count,
@@ -117,9 +118,9 @@ class MetricsExportLoop:
         errors: list[str] = []
         errors_by_host: dict[str, list[str]] = {}
 
-        for host, sid, client in self._clients:
+        for host, _sid, client, endpoints in self._clients:
             host_errors: list[str] = []
-            for ep in self._endpoints:
+            for ep in endpoints:
                 try:
                     payload = client.get(ep)
                     points = extract_metrics(ep, payload, bigip_host=host)
