@@ -199,12 +199,62 @@ def write_collector_config(
     return path
 
 
+def read_collector_config_file(path: Path | None = None) -> dict[str, Any] | None:
+    path = path or GENERATED_CONFIG_PATH
+    if not path.is_file():
+        return None
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data if isinstance(data, dict) else None
+
+
+def exporter_selections_from_config(cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Best-effort reverse map from generated collector YAML to UI exporter rows."""
+    catalog = {e["component"]: e["type"] for e in list_exporter_catalog()}
+    exporters = cfg.get("exporters") or {}
+    pipelines = (cfg.get("service") or {}).get("pipelines") or {}
+
+    def _items_for_pipeline(pipeline: str) -> list[dict[str, Any]]:
+        keys = (pipelines.get(pipeline) or {}).get("exporters") or []
+        items: list[dict[str, Any]] = []
+        for key in keys:
+            block = exporters.get(key) or {}
+            if key == "prometheus/validation":
+                items.append(
+                    {
+                        "type": "prometheus",
+                        "enabled": True,
+                        "params": {"endpoint": block.get("endpoint", DEFAULT_PROMETHEUS_ENDPOINT)},
+                    }
+                )
+                continue
+            if key in {"debug/metrics", "debug/logs"}:
+                items.append(
+                    {
+                        "type": "debug",
+                        "enabled": True,
+                        "params": {"verbosity": block.get("verbosity", "basic")},
+                    }
+                )
+                continue
+            component = str(key).split("/", 1)[0]
+            etype = catalog.get(component)
+            if not etype:
+                continue
+            items.append({"type": etype, "enabled": True, "params": dict(block)})
+        return items
+
+    return _items_for_pipeline("metrics"), _items_for_pipeline("logs")
+
+
 __all__ = [
     "EXPORTER_TYPES",
     "CONTRIB_EXPORTERS_REPO",
     "build_collector_config",
     "build_collector_config_legacy",
     "write_collector_config",
+    "read_collector_config_file",
+    "exporter_selections_from_config",
     "list_exporter_catalog",
     "list_contrib_components",
 ]

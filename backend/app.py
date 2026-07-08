@@ -30,8 +30,10 @@ from backend.collector_config import (
     EXPORTER_TYPES,
     GENERATED_CONFIG_PATH,
     build_collector_config,
+    exporter_selections_from_config,
     list_contrib_components,
     list_exporter_catalog,
+    read_collector_config_file,
     write_collector_config,
 )
 from backend.collector_ops import auto_restart_enabled, control_status as collector_control_status, restart_collector, restart_hint
@@ -61,7 +63,24 @@ DEFAULT_OTLP_ENDPOINT = os.environ.get(
     "OTLP_HTTP_ENDPOINT",
     "http://127.0.0.1:4318",
 )
+_LOCAL_OTLP_ENDPOINTS = frozenset(
+    {
+        "http://127.0.0.1:4318",
+        "http://localhost:4318",
+    }
+)
 SESSION_TTL_SEC = int(os.environ.get("BIGIP_SESSION_TTL_SEC", str(45 * 60)))
+
+
+def _resolve_otlp_endpoint(requested: str | None) -> str:
+    """Prefer server OTLP_HTTP_ENDPOINT when the UI still sends localhost defaults."""
+    server = DEFAULT_OTLP_ENDPOINT.rstrip("/")
+    req = (requested or "").strip().rstrip("/")
+    if not req:
+        return server
+    if req in _LOCAL_OTLP_ENDPOINTS and server not in _LOCAL_OTLP_ENDPOINTS:
+        return server
+    return req
 
 
 def _browser_host(request: Request) -> str:
@@ -256,8 +275,21 @@ def _session_from_record(record: dict[str, Any]) -> _Session:
     )
 
 
+def _hydrate_collector_from_disk() -> None:
+    global _collector_metric_exporters, _collector_log_exporters
+    cfg = read_collector_config_file()
+    if not cfg:
+        return
+    metrics, logs = exporter_selections_from_config(cfg)
+    if metrics:
+        _collector_metric_exporters = metrics
+    if logs:
+        _collector_log_exporters = logs
+
+
 def _restore_runtime_state() -> None:
     global _export_config, _export_loop, _pusher, _log_export
+    _hydrate_collector_from_disk()
     records, export_state = load_store()
     if not records and not export_state:
         return
@@ -435,10 +467,13 @@ def _export_start_body_from_config() -> ExportStartBody | None:
         return None
     return ExportStartBody(
         session_ids=session_ids,
+        endpoints_by_session=dict(_export_config.get("endpoints_by_session") or {}),
         metrics_only=bool(_export_config.get("metrics_only", True)),
         modules=list(_export_config.get("modules") or []),
         poll_interval_sec=float(_export_config.get("poll_interval_sec", 30)),
-        otlp_endpoint=str(_export_config.get("otlp_endpoint") or DEFAULT_OTLP_ENDPOINT),
+        otlp_endpoint=_resolve_otlp_endpoint(
+            str(_export_config.get("otlp_endpoint") or DEFAULT_OTLP_ENDPOINT)
+        ),
     )
 
 
@@ -1209,7 +1244,7 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
     if metrics_clients:
         _stop_metrics_export()
 
-        otlp = body.otlp_endpoint.rstrip("/")
+        otlp = _resolve_otlp_endpoint(body.otlp_endpoint)
         _pusher = OTLPMetricsPusher(otlp)
         _export_loop = MetricsExportLoop(
             metrics_clients,
@@ -1239,7 +1274,7 @@ def _start_export(body: ExportStartBody) -> dict[str, Any]:
         "metrics_only": body.metrics_only,
         "modules": list(body.modules),
         "poll_interval_sec": body.poll_interval_sec,
-        "otlp_endpoint": body.otlp_endpoint.rstrip("/"),
+        "otlp_endpoint": otlp if metrics_clients else _resolve_otlp_endpoint(body.otlp_endpoint),
     }
     _persist_runtime_state()
     return response
