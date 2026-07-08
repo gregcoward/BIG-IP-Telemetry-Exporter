@@ -9,6 +9,7 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
 - [Architecture](#architecture)
 - [User guide](#user-guide)
   - [UI overview](#ui-overview)
+  - [Session persistence across restarts](#session-persistence-across-restarts)
 - [Installation options](#installation-options)
 - [Install on Ubuntu Linux (without Kubernetes)](#install-on-ubuntu-linux-without-kubernetes)
   - [Prerequisites](#prerequisites)
@@ -148,17 +149,39 @@ Use **`PATCH /api/session/{session_id}/log-options`** to change log types on a c
 
 **Log reachability:** BIG-IP must reach the collector host on **5140** and **5141**. The backend auto-detects a LAN IP for remote log pools; set `BIGIP_LOG_SYSLOG_HOST` if auto-detection fails. Do **not** use `127.0.0.1` — BIG-IP rejects loopback destinations.
 
-Credentials are stored in memory. By default they are also written to an **encrypted local session file** so connected devices and export state survive browser refresh and backend restart.
+### Session persistence across restarts
+
+Connected BIG-IPs and export settings **survive backend restarts** by default. The UI does not store devices locally — on load it calls `GET /api/bigips`, which returns whatever the backend restored from disk.
+
+**On connect or change**, the backend writes an encrypted session file (passwords are Fernet-encrypted, not stored in plain text):
+
+| File | Purpose |
+|------|---------|
+| `~/.config/bigip-telemetry-exporter/sessions.json` | Device list, encrypted credentials, per-device log/metric options, export config |
+| `~/.config/bigip-telemetry-exporter/sessions.key` | Auto-generated encryption key (when `BIGIP_SESSION_ENCRYPTION_KEY` is unset) |
+
+**On backend startup**, the API reloads that file, logs in to each BIG-IP again, and **resumes export** if it was active when the process stopped.
+
+Restarting only the **frontend** (browser refresh or Vite) has no effect on persistence — it simply refetches the restored list from the API.
 
 | Environment variable | Default | Purpose |
 |---------------------|---------|---------|
-| `BIGIP_SESSION_PERSIST` | `true` | Set `false` to keep sessions in memory only (45 min TTL) |
-| `BIGIP_SESSION_STORE_PATH` | `~/.config/bigip-telemetry-exporter/sessions.json` | Session + export state file |
-| `BIGIP_SESSION_ENCRYPTION_KEY` | _(auto)_ | Fernet key for encrypting stored passwords |
-| `BIGIP_SESSION_KEY_FILE` | `{store}.key` | File for auto-generated encryption key when env key unset |
+| `BIGIP_SESSION_PERSIST` | `true` | Set `false` for memory-only sessions (lost on backend restart; 45 min TTL while running) |
+| `BIGIP_SESSION_STORE_PATH` | `~/.config/bigip-telemetry-exporter/sessions.json` | Custom path for the session + export state file |
+| `BIGIP_SESSION_ENCRYPTION_KEY` | _(auto)_ | Fixed Fernet key (useful in containers or to reuse one store across hosts) |
+| `BIGIP_SESSION_KEY_FILE` | `{store}.key` | Path for the auto-generated key file |
 | `BIGIP_SESSION_TTL_SEC` | `2700` | In-memory session TTL when persistence is disabled |
 
-Treat the session store like a secrets file: restrict filesystem permissions and disable persistence (`BIGIP_SESSION_PERSIST=false`) on shared admin hosts if you prefer not to retain passwords on disk.
+**Adjusting behavior:**
+
+- **Disable persistence** (fresh start every backend restart):  
+  `export BIGIP_SESSION_PERSIST=false` before starting `run_server.py`
+- **Clear saved devices** without disabling persistence: stop the backend, delete `sessions.json` (and optionally `.key`), then restart
+- **Disconnect one device** in the UI (**Remove**) — removes that session from the store on the next save
+
+Treat the session store like a secrets file: restrict filesystem permissions. On shared admin hosts, set `BIGIP_SESSION_PERSIST=false` if you do not want passwords retained on disk.
+
+**Log profile environment variables:**
 
 | Environment variable | Default | Purpose |
 |---------------------|---------|---------|
