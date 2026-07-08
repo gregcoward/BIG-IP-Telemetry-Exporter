@@ -133,6 +133,10 @@ class BigIPClient:
         )
 
     def login(self) -> None:
+        # Drop any expired token before authenticating; leaving X-F5-Auth-Token on the
+        # session causes BIG-IP to reject the login POST with 401 "token does not exist".
+        self._token = None
+        self._session.headers.pop("X-F5-Auth-Token", None)
         url = self._url("/mgmt/shared/authn/login")
         payloads = [
             {
