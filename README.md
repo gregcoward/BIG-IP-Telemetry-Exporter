@@ -749,7 +749,7 @@ chmod +x scripts/k8s-*.sh   # build, deploy, apply-collector-config, uninstall
 **Remote cluster** (registry):
 
 ```bash
-export IMAGE=ghcr.io/<you>/bigip-telemetry-exporter:1.0.1
+export IMAGE=ghcr.io/<you>/bigip-telemetry-exporter:1.0.0
 docker tag bigip-telemetry-exporter:latest "${IMAGE}"
 docker push "${IMAGE}"
 ```
