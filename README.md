@@ -4,6 +4,8 @@ Pull **metrics** from F5 BIG-IP iControl REST APIs and forward **logs** from BIG
 
 The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Configurator](https://github.com/gregcoward/BIG-IP-Telemetry-Streaming-Configurator): connect to one or more BIG-IPs, choose what to export, configure collector exporters, and start export.
 
+![example screenshot](./images/scr1.png)
+
 ## Table of contents
 
 - [Architecture](#architecture)
