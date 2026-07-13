@@ -797,6 +797,22 @@ export default function App() {
     void updateDeviceMetricEndpoints(configuringSessionId, endpoints);
   };
 
+  /** Add currently visible endpoints without removing selections from other modules. */
+  const selectAllVisibleEndpoints = () => {
+    if (!configuringSessionId || !configuringDevice) return;
+    const merged = new Set(configuringDevice.metric_endpoints ?? []);
+    for (const a of filteredApis) merged.add(a.endpoint);
+    setConfiguringEndpoints(Array.from(merged));
+  };
+
+  /** Remove only currently visible endpoints; keep selections from other modules. */
+  const clearVisibleEndpoints = () => {
+    if (!configuringSessionId || !configuringDevice) return;
+    const visible = new Set(filteredApis.map((a) => a.endpoint));
+    const next = (configuringDevice.metric_endpoints ?? []).filter((ep) => !visible.has(ep));
+    setConfiguringEndpoints(next);
+  };
+
   const catalogByType = useMemo(() => {
     const m = new Map<string, ExporterCatalogItem>();
     for (const c of catalog) m.set(c.type, c);
@@ -1362,7 +1378,9 @@ export default function App() {
         <h2>API endpoints ({filteredApis.length})</h2>
         <p className="muted">
           Catalog from <code>data/bigip_apis.csv</code> ({apis.length} iControl REST paths).
-          Endpoint selection is per BIG-IP; stats paths are recommended for metrics.
+          Endpoint selection is per BIG-IP and accumulates across module filters — choose LTM,
+          then SYS (or any other group) without losing earlier selections. Stats paths are
+          recommended for metrics.
         </p>
         {metricsDevices.length > 0 && (
           <div className="field">
@@ -1413,9 +1431,7 @@ export default function App() {
             type="button"
             className="btn btn-secondary"
             disabled={!configuringSessionId}
-            onClick={() =>
-              setConfiguringEndpoints(filteredApis.map((a) => a.endpoint))
-            }
+            onClick={selectAllVisibleEndpoints}
           >
             Select all visible
           </button>
@@ -1423,9 +1439,17 @@ export default function App() {
             type="button"
             className="btn btn-secondary"
             disabled={!configuringSessionId}
+            onClick={clearVisibleEndpoints}
+          >
+            Clear visible
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!configuringSessionId || configuringEndpointSet.size === 0}
             onClick={() => setConfiguringEndpoints([])}
           >
-            Clear selection
+            Clear all
           </button>
         </div>
         <div className="api-table-wrap">
