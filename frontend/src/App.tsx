@@ -862,7 +862,7 @@ export default function App() {
       setHost("");
       setUsername("admin");
       setPassword("");
-      setLabel("");
+      setDeviceLabel("");
       try {
         await loadCollectorYaml();
       } catch {
