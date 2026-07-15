@@ -22,16 +22,6 @@ The React UI is styled similarly to [BIG-IP-Telemetry-Streaming-Validator-and-Co
   - [Optional — Development UI (Vite)](#optional--development-ui-vite)
   - [Optional — Firewall (UFW)](#optional--firewall-ufw)
   - [Ubuntu troubleshooting](#ubuntu-troubleshooting)
-- [Install on macOS (without Kubernetes)](#install-on-macos-without-kubernetes)
-  - [macOS prerequisites](#macos-prerequisites)
-  - [macOS Step 1 — Clone the repository](#macos-step-1--clone-the-repository)
-  - [macOS Step 2 — Start OpenTelemetry Collector](#macos-step-2--start-opentelemetry-collector)
-  - [macOS Step 3 — Install and run the Python backend](#macos-step-3--install-and-run-the-python-backend)
-  - [macOS Step 4 — Build the web UI (production)](#macos-step-4--build-the-web-ui-production)
-  - [macOS Step 5 — Use the application](#macos-step-5--use-the-application)
-  - [Optional — Development UI (Vite) on macOS](#optional--development-ui-vite-on-macos)
-  - [macOS-specific notes](#macos-specific-notes)
-  - [macOS troubleshooting](#macos-troubleshooting)
 - [Install on Kubernetes](#install-on-kubernetes)
   - [Architecture in the cluster](#architecture-in-the-cluster)
   - [Prerequisites](#kubernetes-prerequisites)
@@ -149,7 +139,7 @@ After `git pull`, rebuild the UI if you serve production assets: `cd frontend &&
 
 ### 1. Connect BIG-IP devices
 
-Open the UI (`http://<HOST-IP>:8001` on Ubuntu or macOS, or port-forward on Kubernetes).
+Open the UI (`http://<HOST-IP>:8001` on Ubuntu, or port-forward on Kubernetes).
 
 | Field | Notes |
 |-------|--------|
@@ -284,7 +274,7 @@ The UI has two sections:
 
 ### 4. Start export
 
-| Field | Ubuntu / macOS (default) | Kubernetes |
+| Field | Ubuntu (default) | Kubernetes |
 |-------|--------------------------|--------------|
 | **OTLP HTTP endpoint** | `http://127.0.0.1:4318` | Pre-filled: `http://otel-collector.bigip-telemetry.svc.cluster.local:4318` |
 | **Poll interval** | Seconds between full poll cycles (default 30) | Same |
@@ -348,7 +338,6 @@ REST equivalent: `POST /api/export/start` with body `{ "session_ids": ["..."], "
 | Method | Best for |
 |--------|----------|
 | **[Ubuntu Linux](#install-on-ubuntu-linux-without-kubernetes)** | Single VM or bare-metal host, Docker for collector, Python for API + UI |
-| **[macOS](#install-on-macos-without-kubernetes)** | Local development or a Mac workstation, Docker Desktop for collector, Python for API + UI |
 | **[Kubernetes](#install-on-kubernetes)** | Clusters (EKS, GKE, OpenShift, kind, etc.) |
 
 All methods run the same components; only packaging and networking differ.
@@ -525,175 +514,6 @@ docker compose down
 
 ---
 
-## Install on macOS (without Kubernetes)
-
-These steps target **macOS** (Apple Silicon or Intel) on a host that can reach your BIG-IP management IP (HTTPS, typically port **443**). The workflow matches [Ubuntu](#install-on-ubuntu-linux-without-kubernetes): Docker Compose runs the collector and Prometheus; Python serves the API and UI.
-
-### macOS prerequisites
-
-Install [Homebrew](https://brew.sh/) if you do not already have it, then install Git, Python, Node.js, and Docker Desktop.
-
-```bash
-# Homebrew (if needed)
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Git, Python 3, Node.js 20 (for building the React UI)
-brew install git python@3 node@20
-
-# Docker Desktop (includes the docker compose plugin)
-brew install --cask docker
-```
-
-Open **Docker Desktop** from Applications and wait until it reports **Docker is running**. Confirm:
-
-```bash
-docker compose version
-python3 --version
-node --version
-npm --version
-```
-
-Confirm the Mac can reach BIG-IP (replace with your management IP):
-
-```bash
-curl -sk --connect-timeout 5 https://<BIG-IP-MGMT-IP>/mgmt/shared/ident | head -c 200
-```
-
-### macOS Step 1 — Clone the repository
-
-```bash
-cd ~
-git clone https://github.com/gregcoward/BIG-IP-Telemetry-Exporter.git
-cd BIG-IP-Telemetry-Exporter
-chmod +x scripts/*.sh
-```
-
-### macOS Step 2 — Start OpenTelemetry Collector
-
-```bash
-./scripts/init-collector-config.sh
-docker compose up -d
-docker compose ps
-```
-
-Verify the collector is running:
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| `otel-collector` | 4318 | OTLP HTTP (backend sends metrics here) |
-| `otel-collector` | 8889 | Prometheus scrape endpoint (default when no metric exporters configured) |
-| `prometheus` | 9090 | Prometheus UI (scrapes collector :8889) |
-| `otel-collector` | 5140 | Syslog receiver (ASM/AFM security logs, system syslog) |
-| `otel-collector` | 5141 | tcplog receiver (LTM request/response logs via HSL) |
-| `otel-collector` | 13133 | Health check |
-
-```bash
-curl -s "http://127.0.0.1:13133/"
-```
-
-### macOS Step 3 — Install and run the Python backend
-
-```bash
-cd ~/BIG-IP-Telemetry-Exporter
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Run the API (listens on **all interfaces**, port **8001** by default):
-
-```bash
-source .venv/bin/activate
-python run_server.py
-# Default port 8001. Override: PORT=8002 python run_server.py
-```
-
-> **Note:** The Docker/Kubernetes image sets `PORT=8000` inside the container (service port 8000). Local `run_server.py` defaults to **8001** unless `PORT` is set.
-
-Leave this terminal open, or run in the background:
-
-```bash
-nohup .venv/bin/python run_server.py > /tmp/bigip-telemetry-api.log 2>&1 &
-curl -s http://127.0.0.1:8001/api/health
-```
-
-### macOS Step 4 — Build the web UI (production)
-
-The UI is **not** in git — you must build it once. In a **new terminal**:
-
-```bash
-cd ~/BIG-IP-Telemetry-Exporter/frontend
-npm ci
-npm run build
-ls -la dist/index.html   # must exist
-```
-
-The backend serves files from `frontend/dist`. Restart `run_server.py` if it was already running.
-
-If you open the app **before** building, you will see `{"detail":"Not Found"}` or a setup hint page instead of the UI.
-
-Open the application:
-
-```bash
-export HOST_IP="$(./scripts/host-ip.sh)"
-echo "UI: http://${HOST_IP}:8001"
-```
-
-### macOS Step 5 — Use the application
-
-Follow the **[User guide](#user-guide)**. Quick checklist:
-
-1. Open **`http://<HOST-IP>:8001`** (use your Mac’s LAN IP from `scripts/host-ip.sh`, not only `localhost`, if opening from another machine).
-2. **BIG-IP connections** — connect with **Export metrics** and/or **Export logs**; use per-device toggles for LTM/ASM/AFM/AVR and system syslog.
-3. **API endpoints** — select stats paths (defaults are pre-selected).
-4. **Collector exporters** (optional) → **Apply collector config** (auto-restarts collector).
-5. **Export** — OTLP `http://127.0.0.1:4318` → **Start export**.
-
-For log export, ensure BIG-IP can reach this Mac on **5140** and **5141**. Set `BIGIP_LOG_SYSLOG_HOST` if auto-detection picks the wrong address (see [macOS-specific notes](#macos-specific-notes)).
-
-### Optional — Development UI (Vite) on macOS
-
-Use this if you are changing the React code (hot reload). Requires the backend from Step 3.
-
-```bash
-cd ~/BIG-IP-Telemetry-Exporter/frontend
-npm run dev
-```
-
-Open **`http://<HOST-IP>:5173`** (proxies `/api` to port 8001).
-
-### macOS-specific notes
-
-| Topic | Guidance |
-|-------|----------|
-| **Docker Desktop** | Must be running before `docker compose up`. On first launch, allow the VM/network permissions macOS prompts for. |
-| **Host IP for BIG-IP log forwarding** | BIG-IP must reach your Mac on **5140** and **5141**. Do **not** use `127.0.0.1` or `localhost` — BIG-IP rejects loopback destinations. The backend auto-detects a LAN IP; override with `export BIGIP_LOG_SYSLOG_HOST="$(./scripts/host-ip.sh)"` before starting `run_server.py` if needed. |
-| **`scripts/host-ip.sh`** | Prints a reachable LAN address (`en0` / `en1` on macOS). Override: `export HOST_IP=192.168.1.10`. |
-| **Ports** | **8001** UI/API, **4318** OTLP, **8889** collector Prometheus scrape, **9090** Prometheus UI, **5140** syslog, **5141** HSL tcplog. Ensure nothing else binds these ports and that macOS firewall (if enabled) allows inbound **5140** / **5141** from BIG-IP. |
-| **BIG-IP on another network** | If BIG-IP cannot route to your Mac’s LAN IP, use a reachable host IP or VPN address and set `BIGIP_LOG_SYSLOG_HOST` explicitly. |
-
-### macOS troubleshooting
-
-| Symptom | What to check |
-|---------|----------------|
-| `Cannot reach BIG-IP` | Routing/firewall from Mac to management IP; `curl -sk https://<IP>/mgmt/shared/ident` |
-| `docker compose` fails / daemon not running | Start **Docker Desktop**; wait until the whale icon is steady |
-| `401 Authentication failed` | Username/password; account not locked; user has iControl REST permission |
-| `Login failed` / TLS errors | Try with **Verify TLS** unchecked |
-| No metrics at downstream sink | Export started? Devices checked for metrics? Metric exporters configured? `docker compose logs otel-collector`; OTLP `http://127.0.0.1:4318` |
-| No logs in collector | BIG-IP can reach Mac on 5140/5141? `BIGIP_LOG_SYSLOG_HOST` not loopback? Profiles attached on virtual servers? |
-| `{"detail":"Not Found"}` on `/` | Run Step 4: `cd frontend && npm ci && npm run build`, restart API |
-| UI blank after build | `frontend/dist` exists; restart `python run_server.py` |
-| Wrong IP in log pools | `export BIGIP_LOG_SYSLOG_HOST="$(./scripts/host-ip.sh)"` and restart API |
-
-Stop the stack:
-
-```bash
-docker compose down
-# stop API: kill the run_server.py process or Ctrl+C
-```
-
 ---
 
 ## Install on Kubernetes
@@ -856,7 +676,7 @@ Services listen on **`0.0.0.0`**. Use the host’s LAN IP instead of `127.0.0.1`
 export HOST_IP="$(./scripts/host-ip.sh)"   # e.g. 192.168.1.10
 ```
 
-| Surface | Ubuntu / macOS (default) | Kubernetes (port-forward) |
+| Surface | Ubuntu (default) | Kubernetes (port-forward) |
 |---------|--------------------------|---------------------------|
 | UI + API | `http://<HOST-IP>:8001` | `http://<HOST-IP>:8001` (port-forward → pod :8000) |
 | Vite dev UI | `http://<HOST-IP>:5173` | — |
@@ -880,7 +700,7 @@ The UI configures exporters from the [OpenTelemetry Collector Contrib](https://g
 
 After **Apply collector config**, the API restarts the collector when docker or kubectl is available. Set `COLLECTOR_AUTO_RESTART=false` to disable.
 
-- **Ubuntu / macOS (manual fallback):** `docker compose restart otel-collector`
+- **Ubuntu (manual fallback):** `docker compose restart otel-collector`
 - **Kubernetes:** `./scripts/k8s-apply-collector-config.sh`
 
 Generated config file: `otel-collector/generated-config.yaml`
